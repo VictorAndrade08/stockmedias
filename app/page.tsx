@@ -22,6 +22,22 @@ async function uploadImageToR2(file: File): Promise<string> {
   return data.url as string;
 }
 
+// --- BORRADO DE IMAGEN EN CLOUDFLARE R2 ---
+async function deleteImageFromR2(imageUrl: string) {
+  try {
+    const filename = imageUrl.split('/').pop();
+    if (!filename) return;
+    const res = await fetch('/api/delete-image', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filename })
+    });
+    if (!res.ok) throw new Error('Error al borrar imagen del bucket');
+  } catch (err) {
+    console.error('Error al borrar imagen:', err);
+  }
+}
+
 // --- TIPOS ---
 interface Product {
   id: string;
@@ -86,7 +102,6 @@ export default function App() {
     const initAuth = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) {
-        // Para que esto funcione, activa "Anonymous" en Supabase -> Auth -> Providers
         const { data, error } = await supabase.auth.signInAnonymously();
         if (!error) setUser(data?.user ?? null);
       } else {
@@ -216,6 +231,10 @@ function RecordSaleView({ products, userId, onRefresh }: { products: Product[]; 
   const [cart, setCart] = useState<CartItem[]>([]);
   const [cartSuccess, setCartSuccess] = useState('');
 
+  // Reabastecimiento rápido en la vista de ventas
+  const [quickRestockProduct, setQuickRestockProduct] = useState<Product | null>(null);
+  const [quickRestockFields, setQuickRestockFields] = useState({ quantity: '', unit_cost: '' });
+
   const filteredProducts = useMemo<Product[]>(() => {
     const base = searchTerm
       ? products.filter(p => p.name.toLowerCase().includes(searchTerm.toLowerCase()))
@@ -241,14 +260,14 @@ function RecordSaleView({ products, userId, onRefresh }: { products: Product[]; 
         quantity: parseInt(String(quantity)),
         date: new Date().toISOString(),
         user_id: userId
-      }]);
+      }]).throwOnError();
       await supabase.from('products')
         .update({ stock: selectedProduct.stock - parseInt(String(quantity)) })
         .eq('id', selectedProduct.id)
-        .eq('user_id', userId);
+        .eq('user_id', userId).throwOnError();
       setSelectedProduct(null); setSalePrice(''); setQuantity(1); onRefresh(); setSuccessMsg('¡Venta registrada con éxito!');
       setTimeout(() => setSuccessMsg(''), 3000);
-    } catch (err) { console.error(err); }
+    } catch (err) { console.error(err); alert('Error registrando venta. Revisa la consola.'); }
   };
 
   const handleImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -271,19 +290,17 @@ function RecordSaleView({ products, userId, onRefresh }: { products: Product[]; 
         stock: parseInt(newProduct.stock), 
         image_url: newProduct.imagePreview,
         user_id: userId
-      }]).select();
+      }]).select().throwOnError();
       if (data && data.length > 0) {
         const added: Product = { ...data[0], imageUrl: data[0].image_url };
-        // Agregar directo al carrito y volver al grid
         setCart(prev => [...prev, { product: added, quantity: 1, salePrice: String(added.price || ''), saleCost: String(added.cost || '') }]);
       }
       setShowQuickAdd(false); setSearchTerm('');
       setNewProduct({ name: '', cost: '', price: '', stock: '', imagePreview: null });
       onRefresh();
-    } catch (err) { console.error(err); }
+    } catch (err) { console.error(err); alert('Error agregando producto rápido.'); }
   };
 
-  // Carrito: agregar producto
   const handleAddToCart = (product: Product) => {
     const existing = cart.find(c => c.product.id === product.id);
     if (existing) {
@@ -320,20 +337,65 @@ function RecordSaleView({ products, userId, onRefresh }: { products: Product[]; 
           quantity: item.quantity,
           date: new Date().toISOString(),
           user_id: userId
-        }]);
+        }]).throwOnError();
         await supabase.from('products')
           .update({ stock: item.product.stock - item.quantity })
-          .eq('id', item.product.id).eq('user_id', userId);
+          .eq('id', item.product.id).eq('user_id', userId).throwOnError();
       }
       setCart([]);
       onRefresh();
       setCartSuccess(`¡${cart.length > 1 ? cart.length + ' productos vendidos' : '1 producto vendido'} con éxito!`);
       setTimeout(() => setCartSuccess(''), 3000);
-    } catch (err) { console.error(err); }
+    } catch (err) { console.error(err); alert('Error confirmando carrito.'); }
+  };
+
+  // Función para guardar el reabastecimiento rápido e inyectarlo al carrito
+  const handleQuickRestockSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!quickRestockProduct || !supabase || !userId) return;
+
+    const qty = parseInt(quickRestockFields.quantity);
+    const unitCost = parseFloat(quickRestockFields.unit_cost);
+    if (!qty || isNaN(unitCost)) return;
+
+    try {
+      const currentStock = quickRestockProduct.stock;
+      const currentCost = quickRestockProduct.avg_cost ?? quickRestockProduct.cost;
+      const newAvgCost = currentStock + qty > 0
+        ? ((currentStock * currentCost) + (qty * unitCost)) / (currentStock + qty)
+        : unitCost;
+
+      await supabase.from('restocks').insert([{
+        product_id: quickRestockProduct.id,
+        quantity: qty,
+        unit_cost: unitCost,
+        date: new Date().toISOString(),
+        user_id: userId
+      }]).throwOnError();
+
+      await supabase.from('products').update({
+        stock: currentStock + qty,
+        cost: newAvgCost,
+        avg_cost: newAvgCost
+      }).eq('id', quickRestockProduct.id).eq('user_id', userId).throwOnError();
+
+      const updatedProduct = { ...quickRestockProduct, stock: currentStock + qty, cost: newAvgCost, avg_cost: newAvgCost };
+
+      // Añadir directamente al carrito con la nueva info
+      setCart(prev => [...prev, { product: updatedProduct, quantity: 1, salePrice: String(updatedProduct.price || ''), saleCost: String(updatedProduct.cost || '') }]);
+
+      setQuickRestockProduct(null);
+      onRefresh();
+      setSuccessMsg(`¡${updatedProduct.name} reabastecido y agregado a la orden!`);
+      setTimeout(() => setSuccessMsg(''), 4000);
+    } catch (err) {
+      console.error(err);
+      alert("Error al reabastecer el producto rápido.");
+    }
   };
 
   return (
-    <div className="max-w-3xl mx-auto w-full">
+    <div className="max-w-3xl mx-auto w-full relative">
       <h2 className="text-[1.75rem] font-medium mb-6 text-[#111111] tracking-tight">Registrar Nueva Venta</h2>
       <div className="bg-white rounded-[2rem] shadow-[0_8px_30px_rgb(0,0,0,0.04)] border border-[#EAEAEC] p-4 md:p-8 w-full">
         {showQuickAdd ? (
@@ -389,29 +451,24 @@ function RecordSaleView({ products, userId, onRefresh }: { products: Product[]; 
                       <span className="font-medium text-[#111111] text-sm truncate">{item.product.name}</span>
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0 flex-wrap">
-                      {/* Cantidad */}
                       <div className="flex items-center gap-1 bg-[#F9FAFA] border border-[#EAEAEC] rounded-[0.75rem] px-1">
                         <button type="button" onClick={() => handleCartQty(item.product.id, item.quantity - 1)} className="w-7 h-7 flex items-center justify-center text-[#71717A] hover:text-[#111111] font-bold touch-manipulation">−</button>
                         <span className="w-6 text-center text-sm font-medium text-[#111111]">{item.quantity}</span>
                         <button type="button" onClick={() => handleCartQty(item.product.id, item.quantity + 1)} disabled={item.quantity >= item.product.stock} className="w-7 h-7 flex items-center justify-center text-[#71717A] hover:text-[#111111] font-bold touch-manipulation disabled:opacity-30">+</button>
                       </div>
-                      {/* Precio venta */}
                       <div className="relative">
                         <DollarSign className="absolute left-2.5 top-2.5 text-[#A1A1AA]" size={13} />
                         <input type="number" step="0.01" value={item.salePrice} onChange={e => handleCartPrice(item.product.id, e.target.value)} className="w-20 pl-7 pr-2 py-2 bg-[#F9FAFA] border border-[#EAEAEC] rounded-[0.75rem] focus:ring-2 focus:ring-[#C8F169] focus:border-[#C8F169] outline-none text-sm" placeholder="0.00" />
                       </div>
-                      {/* Ganancia mini */}
                       {item.salePrice && item.saleCost && (
                         <span className={`text-xs font-bold px-2 py-1 rounded-full ${(parseFloat(item.salePrice) - parseFloat(item.saleCost)) > 0 ? 'bg-[#E8F8B6]/50 text-[#4A6310]' : 'bg-red-50 text-red-600'}`}>
                           +${((parseFloat(item.salePrice) - parseFloat(item.saleCost)) * item.quantity).toFixed(2)}
                         </span>
                       )}
-                      {/* Quitar */}
                       <button type="button" onClick={() => setCart(cart.filter(c => c.product.id !== item.product.id))} className="p-1.5 rounded-[0.5rem] text-[#A1A1AA] hover:text-red-500 hover:bg-red-50 transition-colors touch-manipulation"><X size={14} /></button>
                     </div>
                   </div>
                 ))}
-                {/* Totales + confirmar */}
                 <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2 border-t border-[#EAEAEC]/60">
                   <div className="flex gap-4">
                     <div className="text-center"><p className="text-[10px] font-bold uppercase tracking-widest text-[#A1A1AA]">Total</p><p className="text-lg font-medium text-[#111111] tracking-tight">${cartTotal.toFixed(2)}</p></div>
@@ -422,7 +479,7 @@ function RecordSaleView({ products, userId, onRefresh }: { products: Product[]; 
               </div>
             )}
 
-            {/* Grid de productos — todos visibles, toca para agregar */}
+            {/* Grid de productos */}
             {filteredProducts.length > 0 ? (
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-widest text-[#A1A1AA] mb-3">{searchTerm ? 'Resultados' : 'Todos los productos — toca para agregar'}</p>
@@ -430,7 +487,19 @@ function RecordSaleView({ products, userId, onRefresh }: { products: Product[]; 
                   {filteredProducts.map(p => {
                     const inCart = cart.find(c => c.product.id === p.id);
                     return (
-                      <button key={p.id} type="button" onClick={() => p.stock > 0 ? handleAddToCart(p) : null} disabled={p.stock === 0} className={`relative flex flex-col items-start text-left bg-[#F9FAFA] border-2 rounded-[1.25rem] p-3 transition-all touch-manipulation active:scale-95 ${inCart ? 'border-[#C8F169] bg-[#E8F8B6]/20' : 'border-[#EAEAEC] hover:border-[#C8F169]/50 hover:bg-white'} ${p.stock === 0 ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}>
+                      <button 
+                        key={p.id} 
+                        type="button" 
+                        onClick={() => {
+                          if (p.stock === 0) {
+                            setQuickRestockProduct(p);
+                            setQuickRestockFields({ quantity: '1', unit_cost: String((p.avg_cost ?? p.cost) || '') });
+                          } else {
+                            handleAddToCart(p);
+                          }
+                        }} 
+                        className={`relative flex flex-col items-start text-left bg-[#F9FAFA] border-2 rounded-[1.25rem] p-3 transition-all touch-manipulation active:scale-95 ${inCart ? 'border-[#C8F169] bg-[#E8F8B6]/20' : 'border-[#EAEAEC] hover:border-[#C8F169]/50 hover:bg-white'} ${p.stock === 0 ? 'opacity-60 cursor-pointer border-dashed hover:border-[#C8F169]/80' : 'cursor-pointer'}`}
+                      >
                         {p.imageUrl && <img src={p.imageUrl} alt={p.name} className="w-full h-20 object-cover rounded-[0.75rem] mb-2 border border-[#EAEAEC]" />}
                         {!p.imageUrl && <div className="w-full h-20 bg-[#EAEAEC] rounded-[0.75rem] mb-2 flex items-center justify-center"><Package size={20} className="text-[#A1A1AA]" /></div>}
                         <p className="text-xs font-medium text-[#111111] leading-tight line-clamp-2 mb-1">{p.name}</p>
@@ -451,7 +520,7 @@ function RecordSaleView({ products, userId, onRefresh }: { products: Product[]; 
               <div className="text-center py-8 flex flex-col items-center">
                 <p className="text-[#71717A] font-medium mb-4">No se encontraron productos en el inventario.</p>
                 <button onClick={() => {setNewProduct({ name: searchTerm, cost: '', price: '', stock: '', imagePreview: null }); setShowQuickAdd(true);}} className="bg-[#C8F169] text-[#1A1A1A] hover:bg-[#b8e354] px-6 py-3.5 rounded-[1.25rem] text-sm font-medium transition-all inline-flex items-center space-x-2 active:scale-95 touch-manipulation">
-                  <Plus size={18} /><span>Agregar &quot;{searchTerm}&quot; al Inventario</span>
+                  <Plus size={18} /><span>Agregar "{searchTerm}" al Inventario</span>
                 </button>
               </div>
             ) : (
@@ -492,6 +561,36 @@ function RecordSaleView({ products, userId, onRefresh }: { products: Product[]; 
         )}
         {successMsg && <div className="mt-5 p-4 bg-[#E8F8B6]/50 text-[#4A6310] border border-[#C8F169]/40 rounded-[1.25rem] text-center font-medium animate-in fade-in slide-in-from-bottom-2">{successMsg}</div>}
         {cartSuccess && <div className="mt-5 p-4 bg-[#E8F8B6]/50 text-[#4A6310] border border-[#C8F169]/40 rounded-[1.25rem] text-center font-medium animate-in fade-in slide-in-from-bottom-2">{cartSuccess}</div>}
+
+        {/* --- MODAL REABASTECIMIENTO RÁPIDO DESDE VENTAS --- */}
+        {quickRestockProduct && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/30 backdrop-blur-sm animate-in fade-in" onClick={() => setQuickRestockProduct(null)}>
+            <div className="bg-white rounded-[2rem] shadow-[0_24px_60px_rgba(0,0,0,0.12)] border border-[#EAEAEC] w-full max-w-md p-6 md:p-8 animate-in slide-in-from-bottom-4" onClick={e => e.stopPropagation()}>
+              <div className="flex justify-between items-center mb-6">
+                <h3 className="text-xl font-medium text-[#111111] tracking-tight">Reabastecer para Vender</h3>
+                <button onClick={() => setQuickRestockProduct(null)} className="p-2 rounded-[0.75rem] text-[#A1A1AA] hover:text-[#111111] hover:bg-[#EAEAEC] transition-colors touch-manipulation"><X size={18} /></button>
+              </div>
+              <p className="text-sm text-[#71717A] mb-5 font-medium">El producto <strong className="text-[#111111]">{quickRestockProduct.name}</strong> no tiene stock. Ingresa las unidades que acaban de llegar para agregarlas y venderlas al instante.</p>
+              
+              <form onSubmit={handleQuickRestockSubmit} className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-[#71717A] mb-2">Unidades nuevas</label>
+                    <input type="number" min="1" required value={quickRestockFields.quantity} onChange={e => setQuickRestockFields({...quickRestockFields, quantity: e.target.value})} className="w-full px-4 py-3 bg-[#F9FAFA] border border-[#EAEAEC] rounded-[1.25rem] focus:ring-2 focus:ring-[#C8F169] focus:border-[#C8F169] transition-all outline-none shadow-[inset_0_2px_4px_rgba(0,0,0,0.02)] text-base" placeholder="Ej. 10" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-[#71717A] mb-2">Costo por ud. ($)</label>
+                    <div className="relative"><DollarSign className="absolute left-3 top-3.5 text-[#A1A1AA]" size={18} /><input type="number" step="0.01" min="0" required value={quickRestockFields.unit_cost} onChange={e => setQuickRestockFields({...quickRestockFields, unit_cost: e.target.value})} className="w-full pl-9 pr-4 py-3 bg-[#F9FAFA] border border-[#EAEAEC] rounded-[1.25rem] focus:ring-2 focus:ring-[#C8F169] focus:border-[#C8F169] transition-all outline-none shadow-[inset_0_2px_4px_rgba(0,0,0,0.02)] text-base" placeholder="0.00" /></div>
+                  </div>
+                </div>
+                <div className="flex flex-col sm:flex-row justify-end gap-3 pt-4 border-t border-[#EAEAEC]/60">
+                  <button type="button" onClick={() => setQuickRestockProduct(null)} className="w-full sm:w-auto px-6 py-3 text-[#71717A] hover:text-[#111111] bg-[#F4F5F4] hover:bg-[#EAEAEC] rounded-[1.25rem] font-medium transition-colors touch-manipulation">Cancelar</button>
+                  <button type="submit" className="w-full sm:w-auto bg-[#1A1A1A] hover:bg-black text-white px-6 py-3 rounded-[1.25rem] transition-all font-medium shadow-md shadow-black/10 active:scale-95 touch-manipulation flex items-center justify-center gap-2"><RefreshCw size={16}/><span>Agregar y Vender</span></button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -522,26 +621,25 @@ function DashboardView({ stats, sales, products, onRefresh }: { stats: Dashboard
         cost_at_sale: parseFloat(editFields.costAtSale),
         quantity: parseInt(editFields.quantity),
         date: new Date(editFields.date).toISOString(),
-      }).eq('id', editingSale.id);
+      }).eq('id', editingSale.id).throwOnError();
       setEditingSale(null);
       onRefresh();
       setEditSuccess('¡Venta actualizada con éxito!');
       setTimeout(() => setEditSuccess(''), 3000);
-    } catch (err) { console.error(err); }
+    } catch (err) { console.error(err); alert("Error actualizando venta."); }
   };
 
   const handleDeleteSale = async (sale: Sale) => {
     if (!supabase) return;
     try {
-      // Restaurar stock del producto
       const product = products.find(p => p.id === sale.productId);
       if (product) {
-        await supabase.from('products').update({ stock: product.stock + sale.quantity }).eq('id', product.id);
+        await supabase.from('products').update({ stock: product.stock + sale.quantity }).eq('id', product.id).throwOnError();
       }
-      await supabase.from('sales').delete().eq('id', sale.id);
+      await supabase.from('sales').delete().eq('id', sale.id).throwOnError();
       setConfirmDeleteSaleId(null);
       onRefresh();
-    } catch (err) { console.error(err); }
+    } catch (err) { console.error(err); alert("Error eliminando venta."); }
   };
 
   return (
@@ -671,7 +769,7 @@ function InventoryView({ products, userId, sales, restocks, onRefresh }: { produ
           stock: existingProduct.stock + parseInt(newProduct.stock), 
           cost: parseFloat(newProduct.cost), 
           price: parseFloat(newProduct.price) 
-        }).eq('id', existingProduct.id).eq('user_id', userId);
+        }).eq('id', existingProduct.id).eq('user_id', userId).throwOnError();
       } else {
         await supabase.from('products').insert([{ 
           name: newProduct.name, 
@@ -680,10 +778,10 @@ function InventoryView({ products, userId, sales, restocks, onRefresh }: { produ
           stock: parseInt(newProduct.stock), 
           image_url: newProduct.imagePreview,
           user_id: userId
-        }]);
+        }]).throwOnError();
       }
       setNewProduct({ name: '', cost: '', price: '', stock: '', imagePreview: null }); setShowAdd(false); onRefresh();
-    } catch (err) { console.error(err); }
+    } catch (err) { console.error(err); alert("Error guardando producto"); }
   };
 
   const handleOpenDetail = (product: Product) => {
@@ -704,11 +802,11 @@ function InventoryView({ products, userId, sales, restocks, onRefresh }: { produ
     e.preventDefault();
     if (!detailProduct || !supabase || !userId || !editName.trim()) return;
     try {
-      await supabase.from('products').update({ name: editName.trim() }).eq('id', detailProduct.id).eq('user_id', userId);
+      await supabase.from('products').update({ name: editName.trim() }).eq('id', detailProduct.id).eq('user_id', userId).throwOnError();
       setDetailProduct({ ...detailProduct, name: editName.trim() });
       setEditNameSuccess('¡Nombre actualizado!');
       setTimeout(() => setEditNameSuccess(''), 3000);
-    } catch (err) { console.error(err); }
+    } catch (err) { console.error(err); alert("Error al guardar nombre"); }
   };
 
   const handleRestock = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -722,14 +820,14 @@ function InventoryView({ products, userId, sales, restocks, onRefresh }: { produ
       const newAvgCost = currentStock + qty > 0
         ? ((currentStock * currentCost) + (qty * unitCost)) / (currentStock + qty)
         : unitCost;
-      await supabase.from('restocks').insert([{ product_id: detailProduct.id, quantity: qty, unit_cost: unitCost, date: new Date().toISOString(), user_id: userId }]);
-      await supabase.from('products').update({ stock: currentStock + qty, cost: newAvgCost, avg_cost: newAvgCost }).eq('id', detailProduct.id).eq('user_id', userId);
+      await supabase.from('restocks').insert([{ product_id: detailProduct.id, quantity: qty, unit_cost: unitCost, date: new Date().toISOString(), user_id: userId }]).throwOnError();
+      await supabase.from('products').update({ stock: currentStock + qty, cost: newAvgCost, avg_cost: newAvgCost }).eq('id', detailProduct.id).eq('user_id', userId).throwOnError();
       setDetailProduct({ ...detailProduct, stock: currentStock + qty, cost: newAvgCost, avg_cost: newAvgCost });
       setRestockFields({ quantity: '', unit_cost: '' });
       setShowRestock(false);
       setRestockSuccess(`¡Reabastecido! Costo promedio actualizado a $${newAvgCost.toFixed(2)}`);
       setTimeout(() => setRestockSuccess(''), 4000);
-    } catch (err) { console.error(err); }
+    } catch (err) { console.error(err); alert("Error reabasteciendo"); }
   };
 
   const handleSaveAlert = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -737,34 +835,48 @@ function InventoryView({ products, userId, sales, restocks, onRefresh }: { produ
     if (!detailProduct || !supabase || !userId) return;
     const alertVal = editAlert === '' ? null : parseInt(editAlert);
     try {
-      await supabase.from('products').update({ stock_alert: alertVal }).eq('id', detailProduct.id).eq('user_id', userId);
+      await supabase.from('products').update({ stock_alert: alertVal }).eq('id', detailProduct.id).eq('user_id', userId).throwOnError();
       setDetailProduct({ ...detailProduct, stock_alert: alertVal });
       setAlertSuccess('¡Alerta guardada!');
       setTimeout(() => setAlertSuccess(''), 3000);
-    } catch (err) { console.error(err); }
+    } catch (err) { console.error(err); alert("Error guardando alerta"); }
   };
 
   const handleDeleteProduct = async () => {
     if (!detailProduct || !supabase || !userId) return;
     try {
-      await supabase.from('sales').delete().eq('product_id', detailProduct.id);
-      await supabase.from('restocks').delete().eq('product_id', detailProduct.id);
-      await supabase.from('products').delete().eq('id', detailProduct.id).eq('user_id', userId);
+      // 1. Borrar foto de R2 si existe
+      if (detailProduct.imageUrl) {
+        await deleteImageFromR2(detailProduct.imageUrl);
+      }
+      
+      // 2. Borrar dependencias y producto de Supabase con .throwOnError()
+      await supabase.from('sales').delete().eq('product_id', detailProduct.id).throwOnError();
+      await supabase.from('restocks').delete().eq('product_id', detailProduct.id).throwOnError();
+      await supabase.from('products').delete().eq('id', detailProduct.id).eq('user_id', userId).throwOnError();
+      
       setDetailProduct(null);
       onRefresh();
-    } catch (err) { console.error(err); }
+    } catch (err: any) { 
+      console.error("Error eliminando producto:", err); 
+      alert("Hubo un error al eliminar. Revisa la consola: " + err.message);
+    }
   };
 
   const uploadAndSaveImage = async (file: File) => {
     if (!detailProduct || !supabase || !userId) return;
     try {
+      // Si ya hay foto vieja, idealmente borrarla antes de subir la nueva
+      if (detailProduct.imageUrl) {
+        await deleteImageFromR2(detailProduct.imageUrl);
+      }
       const url = await uploadImageToR2(file);
-      await supabase.from('products').update({ image_url: url }).eq('id', detailProduct.id).eq('user_id', userId);
+      await supabase.from('products').update({ image_url: url }).eq('id', detailProduct.id).eq('user_id', userId).throwOnError();
       setDetailProduct({ ...detailProduct, image_url: url, imageUrl: url });
       setEditImagePreview(url);
       setImageSuccess('¡Imagen actualizada!');
       setTimeout(() => setImageSuccess(''), 3000);
-    } catch (err) { console.error(err); }
+    } catch (err) { console.error(err); alert("Error guardando imagen"); }
   };
 
   const handleEditImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -773,26 +885,18 @@ function InventoryView({ products, userId, sales, restocks, onRefresh }: { produ
     await uploadAndSaveImage(file);
   };
 
-  const handleSaveImage = async () => {
-    if (!detailProduct || !supabase || !userId || editImagePreview === null) return;
-    try {
-      await supabase.from('products').update({ image_url: editImagePreview }).eq('id', detailProduct.id).eq('user_id', userId);
-      setDetailProduct({ ...detailProduct, image_url: editImagePreview, imageUrl: editImagePreview });
-      setEditImagePreview(null);
-      setImageSuccess('¡Imagen actualizada!');
-      setTimeout(() => setImageSuccess(''), 3000);
-    } catch (err) { console.error(err); }
-  };
-
   const handleRemoveImage = async () => {
     if (!detailProduct || !supabase || !userId) return;
     try {
-      await supabase.from('products').update({ image_url: null }).eq('id', detailProduct.id).eq('user_id', userId);
+      if (detailProduct.imageUrl) {
+        await deleteImageFromR2(detailProduct.imageUrl);
+      }
+      await supabase.from('products').update({ image_url: null }).eq('id', detailProduct.id).eq('user_id', userId).throwOnError();
       setDetailProduct({ ...detailProduct, image_url: null, imageUrl: null });
       setEditImagePreview(null);
       setImageSuccess('¡Imagen eliminada!');
       setTimeout(() => setImageSuccess(''), 3000);
-    } catch (err) { console.error(err); }
+    } catch (err) { console.error(err); alert("Error eliminando imagen"); }
   };
 
   const handleSaveRestock = async (restockId: string) => {
@@ -801,36 +905,35 @@ function InventoryView({ products, userId, sales, restocks, onRefresh }: { produ
     const unitCost = parseFloat(editRestockFields.unit_cost);
     if (!qty || !unitCost) return;
     try {
-      await supabase.from('restocks').update({ quantity: qty, unit_cost: unitCost }).eq('id', restockId);
-      // Recalculate avg_cost from all restocks
+      await supabase.from('restocks').update({ quantity: qty, unit_cost: unitCost }).eq('id', restockId).throwOnError();
       const { data: allRestocks } = await supabase.from('restocks').select('*').eq('product_id', detailProduct.id);
       if (allRestocks && allRestocks.length > 0) {
         const totalQty = allRestocks.reduce((s: number, r: Restock) => s + r.quantity, 0);
         const totalCost = allRestocks.reduce((s: number, r: Restock) => s + r.quantity * r.unit_cost, 0);
         const newAvg = totalQty > 0 ? totalCost / totalQty : unitCost;
-        await supabase.from('products').update({ avg_cost: newAvg, cost: newAvg, stock: totalQty }).eq('id', detailProduct.id).eq('user_id', userId);
+        await supabase.from('products').update({ avg_cost: newAvg, cost: newAvg, stock: totalQty }).eq('id', detailProduct.id).eq('user_id', userId).throwOnError();
         setDetailProduct({ ...detailProduct, avg_cost: newAvg, cost: newAvg, stock: totalQty });
       }
       setEditingRestockId(null);
       onRefresh();
-    } catch (err) { console.error(err); }
+    } catch (err) { console.error(err); alert("Error actualizando reabastecimiento"); }
   };
 
   const handleDeleteRestock = async (restockId: string, restockQty: number) => {
     if (!detailProduct || !supabase || !userId) return;
     try {
-      await supabase.from('restocks').delete().eq('id', restockId);
+      await supabase.from('restocks').delete().eq('id', restockId).throwOnError();
       const newStock = Math.max(0, detailProduct.stock - restockQty);
       const { data: allRestocks } = await supabase.from('restocks').select('*').eq('product_id', detailProduct.id);
       const remaining = (allRestocks || []) as Restock[];
       const totalQty = remaining.reduce((s, r) => s + r.quantity, 0);
       const totalCost = remaining.reduce((s, r) => s + r.quantity * r.unit_cost, 0);
       const newAvg = totalQty > 0 ? totalCost / totalQty : detailProduct.cost;
-      await supabase.from('products').update({ stock: newStock, avg_cost: newAvg, cost: newAvg }).eq('id', detailProduct.id).eq('user_id', userId);
+      await supabase.from('products').update({ stock: newStock, avg_cost: newAvg, cost: newAvg }).eq('id', detailProduct.id).eq('user_id', userId).throwOnError();
       setDetailProduct({ ...detailProduct, stock: newStock, avg_cost: newAvg, cost: newAvg });
       setConfirmDeleteRestockId(null);
       onRefresh();
-    } catch (err) { console.error(err); }
+    } catch (err) { console.error(err); alert("Error eliminando reabastecimiento"); }
   };
 
   const productRestocks = detailProduct
