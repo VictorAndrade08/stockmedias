@@ -74,13 +74,19 @@ interface Sale {
   user_id?: string;
 }
 
+interface PendingOrderItem {
+  product_id: string;
+  name: string;
+  quantity: number;
+  sale_price: number;
+  cost_at_sale: number;
+}
+
 interface PendingOrder {
   id: string;
   client_name: string;
-  product_id: string;
-  quantity: number;
+  items: PendingOrderItem[];
   total_price: number;
-  cost_at_sale: number;
   amount_paid: number;
   is_delivered: boolean;
   date: string;
@@ -364,33 +370,33 @@ function PendingOrdersView({ products, userId, pendingOrders, onRefresh }: { pro
     }
   };
 
-  // Crear el pedido múltiple
-  const handleCreateOrder = async (e?: React.FormEvent<HTMLFormElement>) => {
-    if (e) e.preventDefault();
+  // Crear el pedido agrupado
+  const handleCreateOrder = async () => {
     if (!cart.length || !clientName || !userId || !supabase) return;
     
     try {
-      let remainingPaid = parseFloat(orderPaid || '0');
-      
+      // Preparamos el array de items para el JSON
+      const itemsToSave = cart.map(c => ({
+        product_id: c.product.id,
+        name: c.product.name,
+        quantity: c.quantity,
+        sale_price: parseFloat(c.salePrice),
+        cost_at_sale: parseFloat(c.saleCost)
+      }));
+
+      // Guardamos UNA SOLA FILA en la base de datos
+      await supabase.from('pending_orders').insert([{
+        client_name: clientName,
+        items: itemsToSave,
+        total_price: cartTotal,
+        amount_paid: parseFloat(orderPaid || '0'),
+        is_delivered: isDelivered,
+        date: new Date().toISOString(),
+        user_id: userId
+      }]).throwOnError();
+
+      // Descontar el stock inmediatamente para reservarlo en los productos individuales
       for (const item of cart) {
-        const itemTotal = parseFloat(item.salePrice) * item.quantity;
-        // Distribuir el abono inicial entre los productos del carrito
-        const paidForThisItem = Math.min(remainingPaid, itemTotal);
-        remainingPaid = Math.max(0, remainingPaid - paidForThisItem);
-
-        await supabase.from('pending_orders').insert([{
-          client_name: clientName,
-          product_id: item.product.id,
-          quantity: item.quantity,
-          total_price: itemTotal,
-          cost_at_sale: parseFloat(item.saleCost),
-          amount_paid: paidForThisItem,
-          is_delivered: isDelivered,
-          date: new Date().toISOString(),
-          user_id: userId
-        }]).throwOnError();
-
-        // Descontar el stock inmediatamente para reservarlo
         await supabase.from('products')
           .update({ stock: item.product.stock - item.quantity })
           .eq('id', item.product.id)
@@ -432,15 +438,19 @@ function PendingOrdersView({ products, userId, pendingOrders, onRefresh }: { pro
   const handleCompleteOrder = async (order: PendingOrder) => {
     if (!userId || !supabase) return;
     try {
-      await supabase.from('sales').insert([{
-        product_id: order.product_id,
-        sale_price: order.total_price / order.quantity, 
-        cost_at_sale: order.cost_at_sale, 
-        quantity: order.quantity,
-        date: new Date().toISOString(),
-        user_id: userId
-      }]).throwOnError();
+      // Registrar cada item del pedido como una venta individual en el historial
+      for (const item of order.items) {
+        await supabase.from('sales').insert([{
+          product_id: item.product_id,
+          sale_price: item.sale_price, 
+          cost_at_sale: item.cost_at_sale, 
+          quantity: item.quantity,
+          date: new Date().toISOString(),
+          user_id: userId
+        }]).throwOnError();
+      }
 
+      // Borrar el pedido (el stock ya se descontó antes)
       await supabase.from('pending_orders').delete().eq('id', order.id).throwOnError();
       
       onRefresh();
@@ -453,10 +463,14 @@ function PendingOrdersView({ products, userId, pendingOrders, onRefresh }: { pro
     if (!userId || !supabase) return;
     if (!confirm("¿Eliminar este pedido? El stock será devuelto al inventario.")) return;
     try {
-      const product = products.find(p => p.id === order.product_id);
-      if (product) {
-        await supabase.from('products').update({ stock: product.stock + order.quantity }).eq('id', product.id).throwOnError();
+      // Devolver el stock de todos los items cancelados
+      for (const item of order.items) {
+        const product = products.find(p => p.id === item.product_id);
+        if (product) {
+          await supabase.from('products').update({ stock: product.stock + item.quantity }).eq('id', product.id).throwOnError();
+        }
       }
+      // Eliminar pedido
       await supabase.from('pending_orders').delete().eq('id', order.id).throwOnError();
       onRefresh();
     } catch (err) { console.error(err); }
@@ -660,7 +674,6 @@ function PendingOrdersView({ products, userId, pendingOrders, onRefresh }: { pro
       {/* Grid de tarjetas de pedidos pendientes */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6 w-full">
         {pendingOrders.length === 0 && !showAdd ? <div className="col-span-full text-center py-10 text-[#71717A] font-medium">No tienes pedidos pendientes.</div> : pendingOrders.map(order => {
-          const product = products.find(p => p.id === order.product_id);
           const balance = order.total_price - order.amount_paid;
           const isFullyPaid = balance <= 0;
           const readyToComplete = isFullyPaid && order.is_delivered;
@@ -678,9 +691,11 @@ function PendingOrdersView({ products, userId, pendingOrders, onRefresh }: { pro
                 </div>
               </div>
               
-              <div className="bg-[#F9FAFA] p-3 rounded-[1rem] border border-[#EAEAEC] mb-4">
-                <p className="text-sm font-medium text-[#111111]">{order.quantity}x {product ? product.name : 'Producto Eliminado'}</p>
-                <div className="flex justify-between mt-2 text-xs font-medium text-[#71717A]">
+              <div className="bg-[#F9FAFA] p-3 rounded-[1rem] border border-[#EAEAEC] mb-4 space-y-2">
+                {order.items && order.items.map((item, idx) => (
+                  <p key={idx} className="text-sm font-medium text-[#111111]">{item.quantity}x {item.name}</p>
+                ))}
+                <div className="flex justify-between pt-2 border-t border-[#EAEAEC] mt-2 text-xs font-medium text-[#71717A]">
                   <span>Total: <strong className="text-[#111111]">${order.total_price.toFixed(2)}</strong></span>
                   <span>Abonado: <strong className="text-[#111111]">${order.amount_paid.toFixed(2)}</strong></span>
                 </div>
