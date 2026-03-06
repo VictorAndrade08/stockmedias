@@ -211,9 +211,16 @@ function RecordSaleView({ products, userId, onRefresh }: { products: Product[]; 
   const [showQuickAdd, setShowQuickAdd] = useState<boolean>(false);
   const [newProduct, setNewProduct] = useState<NewProductState>({ name: '', cost: '', price: '', stock: '', imagePreview: null });
 
+  // Multi-orden: carrito
+  interface CartItem { product: Product; quantity: number; salePrice: string; saleCost: string; }
+  const [cart, setCart] = useState<CartItem[]>([]);
+  const [cartSuccess, setCartSuccess] = useState('');
+
   const filteredProducts = useMemo<Product[]>(() => {
-    if (!searchTerm) return [];
-    return products.filter(p => p.name.toLowerCase().includes(searchTerm.toLowerCase()));
+    const base = searchTerm
+      ? products.filter(p => p.name.toLowerCase().includes(searchTerm.toLowerCase()))
+      : [...products];
+    return base.sort((a, b) => b.stock - a.stock);
   }, [searchTerm, products]);
 
   const handleSelectProduct = (product: Product) => {
@@ -235,12 +242,10 @@ function RecordSaleView({ products, userId, onRefresh }: { products: Product[]; 
         date: new Date().toISOString(),
         user_id: userId
       }]);
-      
       await supabase.from('products')
         .update({ stock: selectedProduct.stock - parseInt(String(quantity)) })
         .eq('id', selectedProduct.id)
         .eq('user_id', userId);
-
       setSelectedProduct(null); setSalePrice(''); setQuantity(1); onRefresh(); setSuccessMsg('¡Venta registrada con éxito!');
       setTimeout(() => setSuccessMsg(''), 3000);
     } catch (err) { console.error(err); }
@@ -267,13 +272,63 @@ function RecordSaleView({ products, userId, onRefresh }: { products: Product[]; 
         image_url: newProduct.imagePreview,
         user_id: userId
       }]).select();
-      
       if (data && data.length > 0) {
         const added: Product = { ...data[0], imageUrl: data[0].image_url };
-        setSelectedProduct(added); setSaleCost(String(added.cost)); setSalePrice(String(added.price)); 
+        // Agregar directo al carrito y volver al grid
+        setCart(prev => [...prev, { product: added, quantity: 1, salePrice: String(added.price || ''), saleCost: String(added.cost || '') }]);
       }
       setShowQuickAdd(false); setSearchTerm('');
       setNewProduct({ name: '', cost: '', price: '', stock: '', imagePreview: null });
+      onRefresh();
+    } catch (err) { console.error(err); }
+  };
+
+  // Carrito: agregar producto
+  const handleAddToCart = (product: Product) => {
+    const existing = cart.find(c => c.product.id === product.id);
+    if (existing) {
+      setCart(cart.map(c => c.product.id === product.id ? { ...c, quantity: c.quantity + 1 } : c));
+    } else {
+      setCart([...cart, { product, quantity: 1, salePrice: String(product.price || ''), saleCost: String(product.cost || '') }]);
+    }
+  };
+
+  const handleCartQty = (productId: string, qty: number) => {
+    if (qty <= 0) { setCart(cart.filter(c => c.product.id !== productId)); return; }
+    setCart(cart.map(c => c.product.id === productId ? { ...c, quantity: qty } : c));
+  };
+
+  const handleCartPrice = (productId: string, val: string) => {
+    setCart(cart.map(c => c.product.id === productId ? { ...c, salePrice: val } : c));
+  };
+
+  const handleCartCost = (productId: string, val: string) => {
+    setCart(cart.map(c => c.product.id === productId ? { ...c, saleCost: val } : c));
+  };
+
+  const cartTotal = cart.reduce((s, c) => s + (parseFloat(c.salePrice) || 0) * c.quantity, 0);
+  const cartProfit = cart.reduce((s, c) => s + ((parseFloat(c.salePrice) || 0) - (parseFloat(c.saleCost) || 0)) * c.quantity, 0);
+
+  const handleConfirmCart = async () => {
+    if (!cart.length || !userId || !supabase) return;
+    try {
+      for (const item of cart) {
+        await supabase.from('sales').insert([{
+          product_id: item.product.id,
+          sale_price: parseFloat(item.salePrice),
+          cost_at_sale: parseFloat(item.saleCost),
+          quantity: item.quantity,
+          date: new Date().toISOString(),
+          user_id: userId
+        }]);
+        await supabase.from('products')
+          .update({ stock: item.product.stock - item.quantity })
+          .eq('id', item.product.id).eq('user_id', userId);
+      }
+      setCart([]);
+      onRefresh();
+      setCartSuccess(`¡${cart.length > 1 ? cart.length + ' productos vendidos' : '1 producto vendido'} con éxito!`);
+      setTimeout(() => setCartSuccess(''), 3000);
     } catch (err) { console.error(err); }
   };
 
@@ -309,34 +364,103 @@ function RecordSaleView({ products, userId, onRefresh }: { products: Product[]; 
             </div>
             <div className="md:col-span-5 flex flex-col sm:flex-row justify-end mt-4 pt-6 border-t border-[#EAEAEC]/60 gap-3">
               <button type="button" onClick={() => setShowQuickAdd(false)} className="w-full sm:w-auto px-6 py-3 sm:py-3 text-[#71717A] hover:text-[#111111] bg-[#F4F5F4] hover:bg-[#EAEAEC] rounded-[1.25rem] font-medium transition-colors touch-manipulation">Cancelar</button>
-              <button type="submit" className="w-full sm:w-auto bg-[#1A1A1A] hover:bg-black text-white px-8 py-3 sm:py-3 rounded-[1.25rem] transition-all font-medium shadow-md shadow-black/10 active:scale-95 touch-manipulation">Guardar y Vender</button>
+              <button type="submit" className="w-full sm:w-auto bg-[#1A1A1A] hover:bg-black text-white px-8 py-3 sm:py-3 rounded-[1.25rem] transition-all font-medium shadow-md shadow-black/10 active:scale-95 touch-manipulation">Guardar y Continuar</button>
             </div>
           </form>
         ) : !selectedProduct ? (
-          <div className="relative w-full">
-            <label className="block text-sm font-medium text-[#71717A] mb-3">Buscar Producto (escribe el nombre)</label>
-            <div className="relative">
-              <Search className="absolute left-4 top-4 text-[#A1A1AA]" size={20} />
-              <input type="text" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full pl-12 pr-4 py-3.5 bg-[#F9FAFA] border border-[#EAEAEC] rounded-[1.25rem] focus:ring-2 focus:ring-[#C8F169] focus:border-[#C8F169] transition-all outline-none shadow-[inset_0_2px_4px_rgba(0,0,0,0.02)] text-base" placeholder="Ej. Medias Nike..." autoFocus />
+          <>
+            {/* Búsqueda */}
+            <div className="relative w-full mb-5">
+              <label className="block text-sm font-medium text-[#71717A] mb-3">Buscar Producto (escribe el nombre)</label>
+              <div className="relative">
+                <Search className="absolute left-4 top-4 text-[#A1A1AA]" size={20} />
+                <input type="text" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full pl-12 pr-4 py-3.5 bg-[#F9FAFA] border border-[#EAEAEC] rounded-[1.25rem] focus:ring-2 focus:ring-[#C8F169] focus:border-[#C8F169] transition-all outline-none shadow-[inset_0_2px_4px_rgba(0,0,0,0.02)] text-base" placeholder="Ej. Medias Nike..." autoFocus />
+              </div>
             </div>
-            {searchTerm && (
-              <ul className="absolute z-30 w-full mt-2 bg-white border border-[#EAEAEC] rounded-[1.5rem] shadow-[0_12px_40px_rgba(0,0,0,0.08)] max-h-60 overflow-y-auto p-2">
-                {filteredProducts.length > 0 ? filteredProducts.map(p => (
-                  <li key={p.id} onClick={() => handleSelectProduct(p)} className="px-4 py-4 hover:bg-[#F9FAFA] cursor-pointer rounded-2xl flex justify-between items-center transition-colors touch-manipulation">
-                    <span className="font-medium text-[#111111]">{p.name}</span>
-                    <span className={`text-xs font-bold px-3 py-1.5 rounded-full ${p.stock > 0 ? 'bg-[#E8F8B6]/50 text-[#4A6310]' : 'bg-red-50 text-red-600'}`}>Stock: {p.stock}</span>
-                  </li>
-                )) : (
-                  <li className="px-4 py-8 text-center flex flex-col items-center justify-center">
-                    <p className="text-[#71717A] font-medium mb-4">No se encontraron productos en el inventario.</p>
-                    <button onClick={() => {setNewProduct({ name: searchTerm, cost: '', price: '', stock: '', imagePreview: null }); setShowQuickAdd(true);}} className="bg-[#C8F169] text-[#1A1A1A] hover:bg-[#b8e354] px-6 py-3.5 rounded-[1.25rem] text-sm font-medium transition-all inline-flex items-center space-x-2 active:scale-95 touch-manipulation w-full sm:w-auto justify-center">
-                      <Plus size={18} /><span>Agregar &quot;{searchTerm}&quot; al Inventario</span>
-                    </button>
-                  </li>
-                )}
-              </ul>
+
+            {/* Carrito activo */}
+            {cart.length > 0 && (
+              <div className="mb-5 bg-[#F9FAFA] border border-[#EAEAEC] rounded-[1.5rem] p-4 space-y-3 animate-in fade-in">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-[#A1A1AA]">Orden actual — {cart.length} producto{cart.length > 1 ? 's' : ''}</p>
+                {cart.map(item => (
+                  <div key={item.product.id} className="bg-white border border-[#EAEAEC] rounded-[1.25rem] px-4 py-3 flex flex-col sm:flex-row sm:items-center gap-3">
+                    <div className="flex items-center gap-3 flex-1 min-w-0">
+                      {item.product.imageUrl && <img src={item.product.imageUrl} alt={item.product.name} className="w-10 h-10 rounded-[0.75rem] object-cover border border-[#EAEAEC] flex-shrink-0" />}
+                      <span className="font-medium text-[#111111] text-sm truncate">{item.product.name}</span>
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0 flex-wrap">
+                      {/* Cantidad */}
+                      <div className="flex items-center gap-1 bg-[#F9FAFA] border border-[#EAEAEC] rounded-[0.75rem] px-1">
+                        <button type="button" onClick={() => handleCartQty(item.product.id, item.quantity - 1)} className="w-7 h-7 flex items-center justify-center text-[#71717A] hover:text-[#111111] font-bold touch-manipulation">−</button>
+                        <span className="w-6 text-center text-sm font-medium text-[#111111]">{item.quantity}</span>
+                        <button type="button" onClick={() => handleCartQty(item.product.id, item.quantity + 1)} disabled={item.quantity >= item.product.stock} className="w-7 h-7 flex items-center justify-center text-[#71717A] hover:text-[#111111] font-bold touch-manipulation disabled:opacity-30">+</button>
+                      </div>
+                      {/* Precio venta */}
+                      <div className="relative">
+                        <DollarSign className="absolute left-2.5 top-2.5 text-[#A1A1AA]" size={13} />
+                        <input type="number" step="0.01" value={item.salePrice} onChange={e => handleCartPrice(item.product.id, e.target.value)} className="w-20 pl-7 pr-2 py-2 bg-[#F9FAFA] border border-[#EAEAEC] rounded-[0.75rem] focus:ring-2 focus:ring-[#C8F169] focus:border-[#C8F169] outline-none text-sm" placeholder="0.00" />
+                      </div>
+                      {/* Ganancia mini */}
+                      {item.salePrice && item.saleCost && (
+                        <span className={`text-xs font-bold px-2 py-1 rounded-full ${(parseFloat(item.salePrice) - parseFloat(item.saleCost)) > 0 ? 'bg-[#E8F8B6]/50 text-[#4A6310]' : 'bg-red-50 text-red-600'}`}>
+                          +${((parseFloat(item.salePrice) - parseFloat(item.saleCost)) * item.quantity).toFixed(2)}
+                        </span>
+                      )}
+                      {/* Quitar */}
+                      <button type="button" onClick={() => setCart(cart.filter(c => c.product.id !== item.product.id))} className="p-1.5 rounded-[0.5rem] text-[#A1A1AA] hover:text-red-500 hover:bg-red-50 transition-colors touch-manipulation"><X size={14} /></button>
+                    </div>
+                  </div>
+                ))}
+                {/* Totales + confirmar */}
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2 border-t border-[#EAEAEC]/60">
+                  <div className="flex gap-4">
+                    <div className="text-center"><p className="text-[10px] font-bold uppercase tracking-widest text-[#A1A1AA]">Total</p><p className="text-lg font-medium text-[#111111] tracking-tight">${cartTotal.toFixed(2)}</p></div>
+                    <div className="text-center"><p className="text-[10px] font-bold uppercase tracking-widest text-[#A1A1AA]">Ganancia</p><p className={`text-lg font-medium tracking-tight ${cartProfit > 0 ? 'text-[#16A34A]' : 'text-red-500'}`}>${cartProfit.toFixed(2)}</p></div>
+                  </div>
+                  <button type="button" onClick={handleConfirmCart} disabled={cart.some(c => !c.salePrice || parseFloat(c.salePrice) <= 0)} className="w-full sm:w-auto bg-[#1A1A1A] hover:bg-black text-white px-8 py-3 rounded-[1.25rem] font-medium transition-all shadow-md shadow-black/10 active:scale-95 touch-manipulation disabled:bg-[#F4F5F4] disabled:text-[#A1A1AA] disabled:cursor-not-allowed">Confirmar Venta{cart.length > 1 ? ` (${cart.length})` : ''}</button>
+                </div>
+              </div>
             )}
-          </div>
+
+            {/* Grid de productos — todos visibles, toca para agregar */}
+            {filteredProducts.length > 0 ? (
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-widest text-[#A1A1AA] mb-3">{searchTerm ? 'Resultados' : 'Todos los productos — toca para agregar'}</p>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  {filteredProducts.map(p => {
+                    const inCart = cart.find(c => c.product.id === p.id);
+                    return (
+                      <button key={p.id} type="button" onClick={() => p.stock > 0 ? handleAddToCart(p) : null} disabled={p.stock === 0} className={`relative flex flex-col items-start text-left bg-[#F9FAFA] border-2 rounded-[1.25rem] p-3 transition-all touch-manipulation active:scale-95 ${inCart ? 'border-[#C8F169] bg-[#E8F8B6]/20' : 'border-[#EAEAEC] hover:border-[#C8F169]/50 hover:bg-white'} ${p.stock === 0 ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}>
+                        {p.imageUrl && <img src={p.imageUrl} alt={p.name} className="w-full h-20 object-cover rounded-[0.75rem] mb-2 border border-[#EAEAEC]" />}
+                        {!p.imageUrl && <div className="w-full h-20 bg-[#EAEAEC] rounded-[0.75rem] mb-2 flex items-center justify-center"><Package size={20} className="text-[#A1A1AA]" /></div>}
+                        <p className="text-xs font-medium text-[#111111] leading-tight line-clamp-2 mb-1">{p.name}</p>
+                        <p className="text-xs font-bold text-[#111111]">${(p.price || 0).toFixed(2)}</p>
+                        <span className={`mt-1 text-[10px] font-bold px-2 py-0.5 rounded-full ${p.stock > 10 ? 'bg-[#E8F8B6]/50 text-[#4A6310]' : p.stock > 0 ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-600'}`}>{p.stock === 0 ? 'Sin stock' : `${p.stock} uds.`}</span>
+                        {inCart && <div className="absolute top-2 right-2 w-5 h-5 bg-[#C8F169] rounded-full flex items-center justify-center text-[10px] font-bold text-[#1A1A1A]">{inCart.quantity}</div>}
+                      </button>
+                    );
+                  })}
+                </div>
+                {!searchTerm && (
+                  <button type="button" onClick={() => setShowQuickAdd(true)} className="mt-4 w-full flex items-center justify-center gap-2 px-4 py-3 border-2 border-dashed border-[#EAEAEC] hover:border-[#C8F169] rounded-[1.25rem] text-sm font-medium text-[#71717A] hover:text-[#111111] transition-all touch-manipulation">
+                    <Plus size={16} /><span>Agregar nuevo producto al inventario</span>
+                  </button>
+                )}
+              </div>
+            ) : searchTerm ? (
+              <div className="text-center py-8 flex flex-col items-center">
+                <p className="text-[#71717A] font-medium mb-4">No se encontraron productos en el inventario.</p>
+                <button onClick={() => {setNewProduct({ name: searchTerm, cost: '', price: '', stock: '', imagePreview: null }); setShowQuickAdd(true);}} className="bg-[#C8F169] text-[#1A1A1A] hover:bg-[#b8e354] px-6 py-3.5 rounded-[1.25rem] text-sm font-medium transition-all inline-flex items-center space-x-2 active:scale-95 touch-manipulation">
+                  <Plus size={18} /><span>Agregar &quot;{searchTerm}&quot; al Inventario</span>
+                </button>
+              </div>
+            ) : (
+              <div className="text-center py-8">
+                <p className="text-[#71717A] font-medium mb-4">No hay productos en el inventario.</p>
+                <button onClick={() => setShowQuickAdd(true)} className="bg-[#C8F169] text-[#1A1A1A] hover:bg-[#b8e354] px-6 py-3.5 rounded-[1.25rem] text-sm font-medium transition-all inline-flex items-center space-x-2 active:scale-95 touch-manipulation"><Plus size={18} /><span>Agregar primer producto</span></button>
+              </div>
+            )}
+          </>
         ) : (
           <form onSubmit={handleRecordSale} className="space-y-6 w-full">
             <div className="bg-[#F9FAFA] p-4 md:p-5 rounded-[1.5rem] flex flex-col md:flex-row justify-between items-start md:items-center border border-[#EAEAEC] gap-4">
@@ -367,6 +491,7 @@ function RecordSaleView({ products, userId, onRefresh }: { products: Product[]; 
           </form>
         )}
         {successMsg && <div className="mt-5 p-4 bg-[#E8F8B6]/50 text-[#4A6310] border border-[#C8F169]/40 rounded-[1.25rem] text-center font-medium animate-in fade-in slide-in-from-bottom-2">{successMsg}</div>}
+        {cartSuccess && <div className="mt-5 p-4 bg-[#E8F8B6]/50 text-[#4A6310] border border-[#C8F169]/40 rounded-[1.25rem] text-center font-medium animate-in fade-in slide-in-from-bottom-2">{cartSuccess}</div>}
       </div>
     </div>
   );
