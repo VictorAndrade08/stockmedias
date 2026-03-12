@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
-import { LayoutDashboard, Package, ShoppingCart, Plus, Search, DollarSign, TrendingUp, PackageMinus, Pencil, X, Bell, RefreshCw, Trash2, ImagePlus, ZoomIn, ClipboardList, CheckCircle } from 'lucide-react';
+import { LayoutDashboard, Package, ShoppingCart, Plus, Search, DollarSign, TrendingUp, PackageMinus, Pencil, X, Bell, RefreshCw, Trash2, ImagePlus, ZoomIn, ClipboardList, CheckCircle, List, LayoutGrid } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 
 // --- INICIALIZACIÓN DE LA BASE DE DATOS EN LA NUBE (SUPABASE) ---
@@ -38,6 +38,77 @@ async function deleteImageFromR2(imageUrl: string) {
   }
 }
 
+// --- GEMINI NAME SUGGESTER ---
+const GEMINI_API_KEY = process.env.NEXT_PUBLIC_GEMINI_API_KEY as string;
+
+async function suggestProductName(
+  imageUrl: string | null,
+  currentText: string,
+  existingNames: string[]
+): Promise<string[]> {
+  const namesToShow = existingNames.slice(0, 10).join(', ');
+  
+  // Prompt optimizado para velocidad, nombres extensos y análisis estricto de imagen
+  const prompt = `Eres un asistente experto en catalogación para una tienda de calcetines.
+Instrucciones OBLIGATORIAS:
+1. Si hay una imagen, analízala minuciosamente para detectar personajes, colores, patrones y franquicias.
+2. Combina tus hallazgos visuales con el texto del usuario: "${currentText}".
+3. Nombres existentes en inventario: ${namesToShow || 'ninguno'}.
+4. Genera nombres EXTENSOS, MUY DESCRIPTIVOS y fáciles de identificar.
+5. Sigue ESTRICTAMENTE este formato: "[Franquicia/Estilo/Tema] Medias - [Personaje o Diseño] - [Color/Característica]".
+Ejemplo perfecto: "Hora de Aventura Medias - BMO - Verde".
+6. Devuelve de 3 a 5 opciones separadas ÚNICAMENTE por el símbolo | sin saltos de línea, sin Markdown, sin numeración y sin asteriscos.`;
+
+  const parts: any[] = [{ text: prompt }];
+
+  if (imageUrl) {
+    try {
+      const imgRes = await fetch(imageUrl);
+      const blob = await imgRes.blob();
+      const base64 = await new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve((reader.result as string).split(',')[1]);
+        reader.readAsDataURL(blob);
+      });
+      parts.push({ inline_data: { mime_type: blob.type || 'image/jpeg', data: base64 } });
+    } catch (err) {
+      console.warn('Error al procesar imagen para Gemini:', err);
+    }
+  }
+
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 
+        contents: [{ parts }],
+        generationConfig: {
+          temperature: 0.4, // Menos creatividad alucinada, más enfoque en la estructura solicitada
+        }
+      })
+    }
+  );
+
+  const data = await res.json();
+
+  if (!res.ok) {
+    console.error("Gemini API Error:", data);
+    throw new Error(data?.error?.message || 'Error en Gemini API');
+  }
+
+  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+
+  // Limpieza estricta de formato
+  const cleanText = text
+    .replace(/```[\s\S]*?```/g, '') 
+    .replace(/[*_]/g, '')            
+    .replace(/\n/g, '|')            
+    .replace(/- /g, '');            
+
+  return cleanText.split('|').map((s: string) => s.trim()).filter(Boolean);
+}
+
 // --- TIPOS ---
 interface Product {
   id: string;
@@ -72,6 +143,8 @@ interface Sale {
   quantity: number;
   date: string;
   user_id?: string;
+  client_name?: string;
+  clientName?: string;
 }
 
 interface PendingOrderItem {
@@ -107,11 +180,11 @@ interface NewProductState {
   imagePreview: string | null;
 }
 
-interface CartItem { 
-  product: Product; 
-  quantity: number; 
-  salePrice: string; 
-  saleCost: string; 
+interface CartItem {
+  product: Product;
+  quantity: number;
+  salePrice: string;
+  saleCost: string;
 }
 
 export default function App() {
@@ -161,7 +234,8 @@ export default function App() {
         ...s,
         productId: s.product_id,
         salePrice: s.sale_price,
-        costAtSale: s.cost_at_sale
+        costAtSale: s.cost_at_sale,
+        clientName: s.client_name
       })));
     }
     const { data: ordersData } = await supabase.from('pending_orders').select('*').order('date', { ascending: false });
@@ -248,8 +322,68 @@ function NavButton({ active, onClick, icon, label }: { active: boolean; onClick:
   );
 }
 
+// --- COMPONENTE REUTILIZABLE: SUGERIDOR DE NOMBRE CON GEMINI ---
+function NameSuggester({ imagePreview, currentName, existingNames, onSelect }: {
+  imagePreview: string | null;
+  currentName: string;
+  existingNames: string[];
+  onSelect: (name: string) => void;
+}) {
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [cooldown, setCooldown] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
+
+  const handleSuggest = async () => {
+    if (loading || cooldown) return;
+    setLoading(true);
+    setSuggestions([]);
+    setErrorMsg('');
+    try {
+      const result = await suggestProductName(imagePreview, currentName, existingNames);
+      if (result.length === 0) {
+        setErrorMsg('Sin sugerencias, intenta de nuevo');
+      } else {
+        setSuggestions(result);
+      }
+    } catch (err) {
+      console.error('Error al sugerir nombre:', err);
+      setErrorMsg('Error al conectar con Gemini');
+    } finally {
+      setLoading(false);
+      setCooldown(true);
+      setTimeout(() => setCooldown(false), 8000);
+    }
+  };
+
+  return (
+    <div className="flex gap-2 mt-1.5 flex-wrap items-center">
+      <button
+        type="button"
+        onClick={handleSuggest}
+        disabled={loading || cooldown}
+        className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest text-[#A1A1AA] hover:text-[#4A6310] bg-[#F9FAFA] hover:bg-[#E8F8B6]/40 border border-[#EAEAEC] hover:border-[#C8F169]/60 px-2.5 py-1 rounded-full transition-all disabled:opacity-50 touch-manipulation"
+      >
+        {loading ? <><span className="animate-spin inline-block w-2.5 h-2.5 border border-[#A1A1AA] border-t-transparent rounded-full" />...</> : cooldown ? <>⏳ Espera...</> : <>✨ Sugerir</>}
+      </button>
+      {errorMsg && <span className="text-[10px] text-red-400 font-medium">{errorMsg}</span>}
+      {suggestions.map((s, i) => (
+        <button
+          key={i}
+          type="button"
+          onClick={() => { onSelect(s); setSuggestions([]); }}
+          className="text-[10px] font-medium text-[#4A6310] bg-[#E8F8B6]/60 hover:bg-[#C8F169]/40 border border-[#C8F169]/40 px-2.5 py-1 rounded-full transition-all touch-manipulation"
+        >
+          {s}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 // --- VISTA DE PEDIDOS PENDIENTES ---
 function PendingOrdersView({ products, userId, pendingOrders, onRefresh }: { products: Product[]; userId?: string; pendingOrders: PendingOrder[]; onRefresh: () => void }) {
+  const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
   const [showAdd, setShowAdd] = useState<boolean>(false);
   const [searchTerm, setSearchTerm] = useState<string>('');
   
@@ -259,6 +393,7 @@ function PendingOrdersView({ products, userId, pendingOrders, onRefresh }: { pro
   const [orderPaid, setOrderPaid] = useState<string>('0');
   const [isDelivered, setIsDelivered] = useState<boolean>(false);
   const [successMsg, setSuccessMsg] = useState<string>('');
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
 
   // Creación rápida y reabastecimiento rápido desde Pedidos
   const [showQuickAdd, setShowQuickAdd] = useState<boolean>(false);
@@ -304,6 +439,7 @@ function PendingOrdersView({ products, userId, pendingOrders, onRefresh }: { pro
     if (!file) return;
     try {
       const url = await uploadImageToR2(file);
+      newProduct.imagePreview = url;
       setNewProduct({ ...newProduct, imagePreview: url });
     } catch (err) { console.error(err); }
   };
@@ -372,10 +508,9 @@ function PendingOrdersView({ products, userId, pendingOrders, onRefresh }: { pro
 
   // Crear el pedido agrupado
   const handleCreateOrder = async () => {
-    if (!cart.length || !clientName || !userId || !supabase) return;
+    if (!cart.length || !userId || !supabase) return;
     
     try {
-      // Preparamos el array de items para el JSON
       const itemsToSave = cart.map(c => ({
         product_id: c.product.id,
         name: c.product.name,
@@ -384,9 +519,8 @@ function PendingOrdersView({ products, userId, pendingOrders, onRefresh }: { pro
         cost_at_sale: parseFloat(c.saleCost)
       }));
 
-      // Guardamos UNA SOLA FILA en la base de datos
       await supabase.from('pending_orders').insert([{
-        client_name: clientName,
+        client_name: clientName.trim() || 'Cliente Anónimo',
         items: itemsToSave,
         total_price: cartTotal,
         amount_paid: parseFloat(orderPaid || '0'),
@@ -395,7 +529,6 @@ function PendingOrdersView({ products, userId, pendingOrders, onRefresh }: { pro
         user_id: userId
       }]).throwOnError();
 
-      // Descontar el stock inmediatamente para reservarlo en los productos individuales
       for (const item of cart) {
         await supabase.from('products')
           .update({ stock: item.product.stock - item.quantity })
@@ -438,19 +571,19 @@ function PendingOrdersView({ products, userId, pendingOrders, onRefresh }: { pro
   const handleCompleteOrder = async (order: PendingOrder) => {
     if (!userId || !supabase) return;
     try {
-      // Registrar cada item del pedido como una venta individual en el historial
+      const saleDate = new Date().toISOString(); // Se usa la misma fecha para agrupar
       for (const item of order.items) {
         await supabase.from('sales').insert([{
           product_id: item.product_id,
           sale_price: item.sale_price, 
           cost_at_sale: item.cost_at_sale, 
           quantity: item.quantity,
-          date: new Date().toISOString(),
-          user_id: userId
+          date: saleDate,
+          user_id: userId,
+          client_name: order.client_name || 'Cliente Anónimo'
         }]).throwOnError();
       }
 
-      // Borrar el pedido (el stock ya se descontó antes)
       await supabase.from('pending_orders').delete().eq('id', order.id).throwOnError();
       
       onRefresh();
@@ -463,14 +596,12 @@ function PendingOrdersView({ products, userId, pendingOrders, onRefresh }: { pro
     if (!userId || !supabase) return;
     if (!confirm("¿Eliminar este pedido? El stock será devuelto al inventario.")) return;
     try {
-      // Devolver el stock de todos los items cancelados
       for (const item of order.items) {
         const product = products.find(p => p.id === item.product_id);
         if (product) {
           await supabase.from('products').update({ stock: product.stock + item.quantity }).eq('id', product.id).throwOnError();
         }
       }
-      // Eliminar pedido
       await supabase.from('pending_orders').delete().eq('id', order.id).throwOnError();
       onRefresh();
     } catch (err) { console.error(err); }
@@ -480,7 +611,13 @@ function PendingOrdersView({ products, userId, pendingOrders, onRefresh }: { pro
     <div className="space-y-6 w-full relative">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <h2 className="text-[1.75rem] font-medium text-[#111111] tracking-tight">Pedidos Pendientes</h2>
-        <button onClick={() => setShowAdd(!showAdd)} className="bg-[#1A1A1A] hover:bg-black text-white px-6 py-3 sm:py-3 rounded-[1.25rem] flex items-center justify-center space-x-2 transition-all shadow-md shadow-black/10 active:scale-95 font-medium w-full sm:w-auto touch-manipulation"><Plus size={18} /><span>Nuevo Pedido</span></button>
+        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 w-full sm:w-auto">
+          <div className="flex bg-[#F9FAFA] border border-[#EAEAEC] rounded-[1rem] p-1 flex-shrink-0">
+            <button onClick={() => setViewMode('list')} className={`p-2 rounded-[0.75rem] transition-all touch-manipulation ${viewMode === 'list' ? 'bg-white shadow-sm border border-[#EAEAEC] text-[#111111]' : 'text-[#A1A1AA] hover:text-[#111111]'}`}><List size={18} /></button>
+            <button onClick={() => setViewMode('grid')} className={`p-2 rounded-[0.75rem] transition-all touch-manipulation ${viewMode === 'grid' ? 'bg-white shadow-sm border border-[#EAEAEC] text-[#111111]' : 'text-[#A1A1AA] hover:text-[#111111]'}`}><LayoutGrid size={18} /></button>
+          </div>
+          <button onClick={() => setShowAdd(!showAdd)} className="bg-[#1A1A1A] hover:bg-black text-white px-6 py-3 sm:py-3 rounded-[1.25rem] flex items-center justify-center space-x-2 transition-all shadow-md shadow-black/10 active:scale-95 font-medium w-full sm:w-auto touch-manipulation"><Plus size={18} /><span>Nuevo Pedido</span></button>
+        </div>
       </div>
 
       {successMsg && <div className="p-4 bg-[#E8F8B6]/50 text-[#4A6310] border border-[#C8F169]/40 rounded-[1.25rem] text-center font-medium animate-in fade-in slide-in-from-bottom-2">{successMsg}</div>}
@@ -496,6 +633,13 @@ function PendingOrdersView({ products, userId, pendingOrders, onRefresh }: { pro
               <div className="md:col-span-2">
                 <label className="block text-sm font-medium text-[#71717A] mb-2">Nombre (Tipo de media)</label>
                 <input type="text" required value={newProduct.name} onChange={e => setNewProduct({...newProduct, name: e.target.value})} className="w-full px-4 py-3 bg-[#F9FAFA] border border-[#EAEAEC] rounded-[1.25rem] focus:ring-2 focus:ring-[#C8F169] focus:border-[#C8F169] transition-all outline-none shadow-[inset_0_2px_4px_rgba(0,0,0,0.02)] text-base" placeholder="Ej. Medias de compresión" />
+                {/* ✨ SUGERIDOR DE NOMBRE */}
+                <NameSuggester
+                  imagePreview={newProduct.imagePreview}
+                  currentName={newProduct.name}
+                  existingNames={products.map(p => p.name)}
+                  onSelect={(name) => setNewProduct({ ...newProduct, name })}
+                />
               </div>
               <div>
                 <label className="block text-sm font-medium text-[#71717A] mb-2">Costo ($)</label>
@@ -563,7 +707,7 @@ function PendingOrdersView({ products, userId, pendingOrders, onRefresh }: { pro
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2 border-t border-[#EAEAEC]/60">
                       <div className="md:col-span-1">
                         <label className="block text-sm font-medium text-[#71717A] mb-2">Cliente / Contacto</label>
-                        <input type="text" required value={clientName} onChange={e => setClientName(e.target.value)} className="w-full px-4 py-3 bg-white border border-[#EAEAEC] rounded-[1.25rem] focus:ring-2 focus:ring-[#C8F169] focus:border-[#C8F169] outline-none text-sm" placeholder="Ej. Juan Pérez" />
+                        <input type="text" value={clientName} onChange={e => setClientName(e.target.value)} className="w-full px-4 py-3 bg-white border border-[#EAEAEC] rounded-[1.25rem] focus:ring-2 focus:ring-[#C8F169] focus:border-[#C8F169] outline-none text-sm" placeholder="Ej. Juan Pérez (Opcional)" />
                       </div>
                       <div>
                         <label className="block text-sm font-medium text-[#71717A] mb-2">Abono Inicial ($)</label>
@@ -579,7 +723,7 @@ function PendingOrdersView({ products, userId, pendingOrders, onRefresh }: { pro
 
                     <div className="flex flex-col sm:flex-row justify-end gap-3 mt-2">
                       <button type="button" onClick={() => {setCart([]); setShowAdd(false);}} className="w-full sm:w-auto px-6 py-3 text-[#71717A] bg-white border border-[#EAEAEC] hover:bg-[#F4F5F4] rounded-[1.25rem] font-medium transition-colors">Cancelar</button>
-                      <button type="button" onClick={() => handleCreateOrder()} disabled={!clientName || cart.some(c => !c.salePrice || parseFloat(c.salePrice) <= 0)} className="w-full sm:w-auto bg-[#1A1A1A] hover:bg-black text-white px-8 py-3 rounded-[1.25rem] transition-all font-medium active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed">Guardar Pedido Pendiente</button>
+                      <button type="button" onClick={() => handleCreateOrder()} disabled={cart.some(c => !c.salePrice || parseFloat(c.salePrice) <= 0)} className="w-full sm:w-auto bg-[#1A1A1A] hover:bg-black text-white px-8 py-3 rounded-[1.25rem] transition-all font-medium active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed">Guardar Pedido Pendiente</button>
                     </div>
                   </div>
 
@@ -671,65 +815,178 @@ function PendingOrdersView({ products, userId, pendingOrders, onRefresh }: { pro
         </div>
       )}
 
-      {/* Grid de tarjetas de pedidos pendientes */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6 w-full">
-        {pendingOrders.length === 0 && !showAdd ? <div className="col-span-full text-center py-10 text-[#71717A] font-medium">No tienes pedidos pendientes.</div> : pendingOrders.map(order => {
-          const balance = order.total_price - order.amount_paid;
-          const isFullyPaid = balance <= 0;
-          const readyToComplete = isFullyPaid && order.is_delivered;
+      {/* Grid vs List de pedidos pendientes */}
+      {pendingOrders.length === 0 && !showAdd ? (
+        <div className="col-span-full text-center py-10 text-[#71717A] font-medium">No tienes pedidos pendientes.</div>
+      ) : viewMode === 'grid' ? (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6 w-full animate-in fade-in">
+          {pendingOrders.map(order => {
+            const balance = order.total_price - order.amount_paid;
+            const isFullyPaid = balance <= 0;
+            const readyToComplete = isFullyPaid && order.is_delivered;
 
-          return (
-            <div key={order.id} className="bg-white p-5 rounded-[2rem] shadow-[0_4px_24px_rgba(0,0,0,0.02)] border border-[#EAEAEC] flex flex-col h-full">
-              <div className="flex justify-between items-start mb-4 gap-2">
-                <div>
-                  <h3 className="font-medium text-[#111111] text-lg leading-tight tracking-tight">{order.client_name}</h3>
-                  <p className="text-xs text-[#71717A] mt-1">{new Date(order.date).toLocaleDateString()}</p>
-                </div>
-                <div className="flex flex-col gap-1 items-end">
-                  <span className={`px-2 py-1 text-[10px] font-bold uppercase tracking-widest rounded-full flex-shrink-0 ${isFullyPaid ? 'bg-[#E8F8B6]/50 text-[#4A6310]' : 'bg-red-50 text-red-600'}`}>{isFullyPaid ? 'Pagado' : `Debe $${balance.toFixed(2)}`}</span>
-                  <span className={`px-2 py-1 text-[10px] font-bold uppercase tracking-widest rounded-full flex-shrink-0 ${order.is_delivered ? 'bg-[#E8F8B6]/50 text-[#4A6310]' : 'bg-amber-50 text-amber-700'}`}>{order.is_delivered ? 'Entregado' : 'Por Entregar'}</span>
-                </div>
-              </div>
-              
-              <div className="bg-[#F9FAFA] p-3 rounded-[1rem] border border-[#EAEAEC] mb-4 space-y-2">
-                {order.items && order.items.map((item, idx) => (
-                  <p key={idx} className="text-sm font-medium text-[#111111]">{item.quantity}x {item.name}</p>
-                ))}
-                <div className="flex justify-between pt-2 border-t border-[#EAEAEC] mt-2 text-xs font-medium text-[#71717A]">
-                  <span>Total: <strong className="text-[#111111]">${order.total_price.toFixed(2)}</strong></span>
-                  <span>Abonado: <strong className="text-[#111111]">${order.amount_paid.toFixed(2)}</strong></span>
-                </div>
-              </div>
-
-              <div className="mt-auto pt-4 border-t border-[#EAEAEC]/60 space-y-3">
-                {payingOrderId === order.id ? (
-                  <form onSubmit={(e) => handleAddPayment(e, order)} className="flex gap-2">
-                    <input type="number" step="0.01" max={balance} required value={addPaymentAmount} onChange={e => setAddPaymentAmount(e.target.value)} className="flex-1 px-3 py-2 bg-[#F9FAFA] border border-[#EAEAEC] rounded-[0.75rem] text-sm outline-none focus:border-[#C8F169]" placeholder={`Máx: $${balance.toFixed(2)}`} />
-                    <button type="button" onClick={() => setPayingOrderId(null)} className="px-3 py-2 text-xs font-medium text-[#71717A] bg-white border border-[#EAEAEC] rounded-[0.75rem]">X</button>
-                    <button type="submit" className="px-3 py-2 text-xs font-medium text-[#111111] bg-[#C8F169] rounded-[0.75rem]">Abonar</button>
-                  </form>
-                ) : (
-                  <div className="flex flex-wrap gap-2">
-                    {!isFullyPaid && <button onClick={() => setPayingOrderId(order.id)} className="px-4 py-2 bg-white border border-[#EAEAEC] hover:border-[#C8F169] text-sm font-medium text-[#111111] rounded-[1rem] transition-colors touch-manipulation flex-1 text-center">Registrar Abono</button>}
-                    {!order.is_delivered && <button onClick={() => handleToggleDelivered(order)} className="px-4 py-2 bg-white border border-[#EAEAEC] hover:border-[#C8F169] text-sm font-medium text-[#111111] rounded-[1rem] transition-colors touch-manipulation flex-1 text-center">Marcar Entregado</button>}
+            return (
+              <div key={order.id} className="bg-white p-5 rounded-[2rem] shadow-[0_4px_24px_rgba(0,0,0,0.02)] border border-[#EAEAEC] flex flex-col h-full">
+                <div className="flex justify-between items-start mb-4 gap-2">
+                  <div>
+                    <h3 className="font-medium text-[#111111] text-lg leading-tight tracking-tight">{order.client_name}</h3>
+                    <p className="text-xs text-[#71717A] mt-1">{new Date(order.date).toLocaleDateString()}</p>
                   </div>
-                )}
+                  <div className="flex flex-col gap-1 items-end">
+                    <span className={`px-2 py-1 text-[10px] font-bold uppercase tracking-widest rounded-full flex-shrink-0 ${isFullyPaid ? 'bg-[#E8F8B6]/50 text-[#4A6310]' : 'bg-red-50 text-red-600'}`}>{isFullyPaid ? 'Pagado' : `Debe $${balance.toFixed(2)}`}</span>
+                    <span className={`px-2 py-1 text-[10px] font-bold uppercase tracking-widest rounded-full flex-shrink-0 ${order.is_delivered ? 'bg-[#E8F8B6]/50 text-[#4A6310]' : 'bg-amber-50 text-amber-700'}`}>{order.is_delivered ? 'Entregado' : 'Por Entregar'}</span>
+                  </div>
+                </div>
+                
+                <div className="bg-[#F9FAFA] p-3 rounded-[1rem] border border-[#EAEAEC] mb-4 space-y-2">
+                  {order.items && order.items.map((item, idx) => {
+                    const product = products.find(p => p.id === item.product_id);
+                    return (
+                      <div key={idx} className="flex items-center gap-3">
+                        {product?.imageUrl ? (
+                          <img 
+                            src={product.imageUrl} 
+                            alt={item.name} 
+                            className="w-8 h-8 rounded-[0.5rem] object-cover border border-[#EAEAEC] flex-shrink-0 cursor-pointer" 
+                            onClick={(e) => { e.stopPropagation(); setLightboxUrl(product.imageUrl!); }}
+                          />
+                        ) : (
+                          <div className="w-8 h-8 bg-[#EAEAEC] rounded-[0.5rem] flex items-center justify-center flex-shrink-0"><Package size={14} className="text-[#A1A1AA]" /></div>
+                        )}
+                        <p className="text-sm font-medium text-[#111111]">{item.quantity}x {item.name}</p>
+                      </div>
+                    );
+                  })}
+                  <div className="flex justify-between pt-2 border-t border-[#EAEAEC] mt-2 text-xs font-medium text-[#71717A]">
+                    <span>Total: <strong className="text-[#111111]">${order.total_price.toFixed(2)}</strong></span>
+                    <span>Abonado: <strong className="text-[#111111]">${order.amount_paid.toFixed(2)}</strong></span>
+                  </div>
+                </div>
 
-                {readyToComplete ? (
-                  <button onClick={() => handleCompleteOrder(order)} className="w-full flex items-center justify-center gap-2 bg-[#1A1A1A] hover:bg-black text-white px-4 py-3 rounded-[1rem] text-sm font-medium transition-all active:scale-95 touch-manipulation"><CheckCircle size={16} /><span>Finalizar y pasar a Ventas</span></button>
-                ) : (
-                  <button onClick={() => handleDeleteOrder(order)} className="w-full text-center text-xs font-medium text-red-500 hover:text-red-700 py-1 touch-manipulation">Cancelar pedido (devuelve stock)</button>
-                )}
+                <div className="mt-auto pt-4 border-t border-[#EAEAEC]/60 space-y-3">
+                  {payingOrderId === order.id ? (
+                    <form onSubmit={(e) => handleAddPayment(e, order)} className="flex gap-2">
+                      <input type="number" step="0.01" max={balance} required value={addPaymentAmount} onChange={e => setAddPaymentAmount(e.target.value)} className="flex-1 px-3 py-2 bg-[#F9FAFA] border border-[#EAEAEC] rounded-[0.75rem] text-sm outline-none focus:border-[#C8F169]" placeholder={`Máx: $${balance.toFixed(2)}`} />
+                      <button type="button" onClick={() => setPayingOrderId(null)} className="px-3 py-2 text-xs font-medium text-[#71717A] bg-white border border-[#EAEAEC] rounded-[0.75rem]">X</button>
+                      <button type="submit" className="px-3 py-2 text-xs font-medium text-[#111111] bg-[#C8F169] rounded-[0.75rem]">Abonar</button>
+                    </form>
+                  ) : (
+                    <div className="flex flex-wrap gap-2">
+                      {!isFullyPaid && <button onClick={() => setPayingOrderId(order.id)} className="px-4 py-2 bg-white border border-[#EAEAEC] hover:border-[#C8F169] text-sm font-medium text-[#111111] rounded-[1rem] transition-colors touch-manipulation flex-1 text-center">Registrar Abono</button>}
+                      {!order.is_delivered && <button onClick={() => handleToggleDelivered(order)} className="px-4 py-2 bg-white border border-[#EAEAEC] hover:border-[#C8F169] text-sm font-medium text-[#111111] rounded-[1rem] transition-colors touch-manipulation flex-1 text-center">Marcar Entregado</button>}
+                    </div>
+                  )}
+
+                  {readyToComplete ? (
+                    <button onClick={() => handleCompleteOrder(order)} className="w-full flex items-center justify-center gap-2 bg-[#1A1A1A] hover:bg-black text-white px-4 py-3 rounded-[1rem] text-sm font-medium transition-all active:scale-95 touch-manipulation"><CheckCircle size={16} /><span>Finalizar y pasar a Ventas</span></button>
+                  ) : (
+                    <button onClick={() => handleDeleteOrder(order)} className="w-full text-center text-xs font-medium text-red-500 hover:text-red-700 py-1 touch-manipulation">Cancelar pedido (devuelve stock)</button>
+                  )}
+                </div>
               </div>
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="bg-white rounded-[2rem] shadow-[0_8px_30px_rgb(0,0,0,0.04)] border border-[#EAEAEC] overflow-hidden w-full animate-in fade-in">
+          <div className="overflow-x-auto w-full" style={{ WebkitOverflowScrolling: 'touch' } as React.CSSProperties}>
+            <table className="w-full text-left border-collapse min-w-[800px]">
+              <thead>
+                <tr className="bg-white text-[#A1A1AA] text-[11px] font-bold uppercase tracking-widest border-b border-[#EAEAEC]">
+                  <th className="px-4 md:px-6 py-4 md:py-5">Cliente / Fecha</th>
+                  <th className="px-4 md:px-6 py-4 md:py-5">Artículos</th>
+                  <th className="px-4 md:px-6 py-4 md:py-5">Finanzas</th>
+                  <th className="px-4 md:px-6 py-4 md:py-5">Estado</th>
+                  <th className="px-4 md:px-6 py-4 md:py-5 text-right">Acciones</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#EAEAEC]/60">
+                {pendingOrders.map(order => {
+                  const balance = order.total_price - order.amount_paid;
+                  const isFullyPaid = balance <= 0;
+                  const readyToComplete = isFullyPaid && order.is_delivered;
+                  return (
+                    <tr key={order.id} className="hover:bg-[#F9FAFA] transition-colors group align-top">
+                      <td className="px-4 md:px-6 py-4 md:py-5">
+                        <p className="font-medium text-[#111111] text-base leading-tight">{order.client_name}</p>
+                        <p className="text-xs text-[#71717A] mt-1">{new Date(order.date).toLocaleDateString()}</p>
+                      </td>
+                      <td className="px-4 md:px-6 py-4 md:py-5">
+                        <div className="space-y-2">
+                          {order.items && order.items.map((item, idx) => {
+                            const product = products.find(p => p.id === item.product_id);
+                            return (
+                              <div key={idx} className="flex items-center gap-3">
+                                {product?.imageUrl ? (
+                                  <img 
+                                    src={product.imageUrl} 
+                                    alt={item.name} 
+                                    className="w-8 h-8 rounded-[0.5rem] object-cover border border-[#EAEAEC] flex-shrink-0 cursor-pointer" 
+                                    onClick={(e) => { e.stopPropagation(); setLightboxUrl(product.imageUrl!); }}
+                                  />
+                                ) : (
+                                  <div className="w-8 h-8 bg-[#EAEAEC] rounded-[0.5rem] flex items-center justify-center flex-shrink-0"><Package size={14} className="text-[#A1A1AA]" /></div>
+                                )}
+                                <p className="text-sm font-medium text-[#111111]">{item.quantity}x {item.name}</p>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </td>
+                      <td className="px-4 md:px-6 py-4 md:py-5 space-y-1">
+                         <p className="text-xs font-medium text-[#71717A]">Total: <strong className="text-[#111111]">${order.total_price.toFixed(2)}</strong></p>
+                         <p className="text-xs font-medium text-[#71717A]">Abonado: <strong className="text-[#111111]">${order.amount_paid.toFixed(2)}</strong></p>
+                      </td>
+                      <td className="px-4 md:px-6 py-4 md:py-5">
+                        <div className="flex flex-col gap-1.5 items-start">
+                          <span className={`px-2 py-1 text-[10px] font-bold uppercase tracking-widest rounded-full flex-shrink-0 ${isFullyPaid ? 'bg-[#E8F8B6]/50 text-[#4A6310]' : 'bg-red-50 text-red-600'}`}>{isFullyPaid ? 'Pagado' : `Debe $${balance.toFixed(2)}`}</span>
+                          <span className={`px-2 py-1 text-[10px] font-bold uppercase tracking-widest rounded-full flex-shrink-0 ${order.is_delivered ? 'bg-[#E8F8B6]/50 text-[#4A6310]' : 'bg-amber-50 text-amber-700'}`}>{order.is_delivered ? 'Entregado' : 'Por Entregar'}</span>
+                        </div>
+                      </td>
+                      <td className="px-4 md:px-6 py-4 md:py-5">
+                        <div className="flex flex-col gap-2 min-w-[200px] items-end ml-auto">
+                           {payingOrderId === order.id ? (
+                              <form onSubmit={(e) => handleAddPayment(e, order)} className="flex gap-2 w-full">
+                                <input type="number" step="0.01" max={balance} required value={addPaymentAmount} onChange={e => setAddPaymentAmount(e.target.value)} className="flex-1 px-3 py-2 bg-[#F9FAFA] border border-[#EAEAEC] rounded-[0.75rem] text-sm outline-none focus:border-[#C8F169] min-w-0" placeholder={`Máx: $${balance.toFixed(2)}`} />
+                                <button type="button" onClick={() => setPayingOrderId(null)} className="px-3 py-2 text-xs font-medium text-[#71717A] bg-white border border-[#EAEAEC] rounded-[0.75rem]">X</button>
+                                <button type="submit" className="px-3 py-2 text-xs font-medium text-[#111111] bg-[#C8F169] rounded-[0.75rem]">Abonar</button>
+                              </form>
+                            ) : (
+                              <div className="flex flex-col gap-2 w-full">
+                                <div className="flex gap-2 w-full">
+                                  {!isFullyPaid && <button onClick={() => setPayingOrderId(order.id)} className="px-3 py-2 bg-white border border-[#EAEAEC] hover:border-[#C8F169] text-xs font-medium text-[#111111] rounded-[0.75rem] transition-colors touch-manipulation flex-1 text-center">Registrar Abono</button>}
+                                  {!order.is_delivered && <button onClick={() => handleToggleDelivered(order)} className="px-3 py-2 bg-white border border-[#EAEAEC] hover:border-[#C8F169] text-xs font-medium text-[#111111] rounded-[0.75rem] transition-colors touch-manipulation flex-1 text-center">Marcar Entregado</button>}
+                                </div>
+                                {readyToComplete ? (
+                                  <button onClick={() => handleCompleteOrder(order)} className="w-full flex items-center justify-center gap-1.5 bg-[#1A1A1A] hover:bg-black text-white px-3 py-2 rounded-[0.75rem] text-xs font-medium transition-all active:scale-95 touch-manipulation"><CheckCircle size={14} /><span>Finalizar y pasar a Ventas</span></button>
+                                ) : (
+                                  <button onClick={() => handleDeleteOrder(order)} className="w-full text-center text-[11px] font-medium text-red-500 hover:text-red-700 py-1 touch-manipulation">Cancelar pedido (devuelve stock)</button>
+                                )}
+                              </div>
+                            )}
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* --- Lightbox Global para Pedidos --- */}
+      {lightboxUrl && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-sm animate-in fade-in" onClick={() => setLightboxUrl(null)}>
+          <button className="absolute top-4 right-4 p-2 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors touch-manipulation"><X size={22} /></button>
+          <img src={lightboxUrl} alt="Imagen ampliada" className="max-w-[92vw] max-h-[88vh] rounded-[1.5rem] shadow-2xl object-contain animate-in zoom-in-90" onClick={e => e.stopPropagation()} />
+        </div>
+      )}
     </div>
   );
 }
 
-// --- VISTAS ANTERIORES (VENTAS, DASHBOARD, INVENTARIO INTACTAS) ---
+// --- VISTAS ANTERIORES (VENTAS, DASHBOARD INTACTAS) ---
 
 function RecordSaleView({ products, userId, onRefresh }: { products: Product[]; userId?: string; onRefresh: () => void }) {
   const [searchTerm, setSearchTerm] = useState<string>('');
@@ -737,6 +994,7 @@ function RecordSaleView({ products, userId, onRefresh }: { products: Product[]; 
   const [saleCost, setSaleCost] = useState<string>(''); 
   const [salePrice, setSalePrice] = useState<string>('');
   const [quantity, setQuantity] = useState<number>(1);
+  const [clientName, setClientName] = useState<string>('');
   const [successMsg, setSuccessMsg] = useState<string>('');
   const [showQuickAdd, setShowQuickAdd] = useState<boolean>(false);
   const [newProduct, setNewProduct] = useState<NewProductState>({ name: '', cost: '', price: '', stock: '', imagePreview: null });
@@ -771,13 +1029,14 @@ function RecordSaleView({ products, userId, onRefresh }: { products: Product[]; 
         cost_at_sale: parseFloat(saleCost), 
         quantity: parseInt(String(quantity)),
         date: new Date().toISOString(),
-        user_id: userId
+        user_id: userId,
+        client_name: clientName.trim() || 'Cliente Anónimo'
       }]).throwOnError();
       await supabase.from('products')
         .update({ stock: selectedProduct.stock - parseInt(String(quantity)) })
         .eq('id', selectedProduct.id)
         .eq('user_id', userId).throwOnError();
-      setSelectedProduct(null); setSalePrice(''); setQuantity(1); onRefresh(); setSuccessMsg('¡Venta registrada con éxito!');
+      setSelectedProduct(null); setSalePrice(''); setQuantity(1); setClientName(''); onRefresh(); setSuccessMsg('¡Venta registrada con éxito!');
       setTimeout(() => setSuccessMsg(''), 3000);
     } catch (err) { console.error(err); alert('Error registrando venta. Revisa la consola.'); }
   };
@@ -841,20 +1100,23 @@ function RecordSaleView({ products, userId, onRefresh }: { products: Product[]; 
   const handleConfirmCart = async () => {
     if (!cart.length || !userId || !supabase) return;
     try {
+      const saleDate = new Date().toISOString();
       for (const item of cart) {
         await supabase.from('sales').insert([{
           product_id: item.product.id,
           sale_price: parseFloat(item.salePrice),
           cost_at_sale: parseFloat(item.saleCost),
           quantity: item.quantity,
-          date: new Date().toISOString(),
-          user_id: userId
+          date: saleDate,
+          user_id: userId,
+          client_name: clientName.trim() || 'Cliente Anónimo'
         }]).throwOnError();
         await supabase.from('products')
           .update({ stock: item.product.stock - item.quantity })
           .eq('id', item.product.id).eq('user_id', userId).throwOnError();
       }
       setCart([]);
+      setClientName('');
       onRefresh();
       setCartSuccess(`¡${cart.length > 1 ? cart.length + ' productos vendidos' : '1 producto vendido'} con éxito!`);
       setTimeout(() => setCartSuccess(''), 3000);
@@ -917,6 +1179,13 @@ function RecordSaleView({ products, userId, onRefresh }: { products: Product[]; 
             <div className="md:col-span-2">
               <label className="block text-sm font-medium text-[#71717A] mb-2">Nombre (Tipo de media)</label>
               <input type="text" required value={newProduct.name} onChange={e => setNewProduct({...newProduct, name: e.target.value})} className="w-full px-4 py-3 bg-[#F9FAFA] border border-[#EAEAEC] rounded-[1.25rem] focus:ring-2 focus:ring-[#C8F169] focus:border-[#C8F169] transition-all outline-none shadow-[inset_0_2px_4px_rgba(0,0,0,0.02)] text-base" placeholder="Ej. Medias de compresión" />
+              {/* ✨ SUGERIDOR DE NOMBRE */}
+              <NameSuggester
+                imagePreview={newProduct.imagePreview}
+                currentName={newProduct.name}
+                existingNames={products.map(p => p.name)}
+                onSelect={(name) => setNewProduct({ ...newProduct, name })}
+              />
             </div>
             <div>
               <label className="block text-sm font-medium text-[#71717A] mb-2">Costo ($)</label>
@@ -979,12 +1248,15 @@ function RecordSaleView({ products, userId, onRefresh }: { products: Product[]; 
                     </div>
                   </div>
                 ))}
-                <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2 border-t border-[#EAEAEC]/60">
-                  <div className="flex gap-4">
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-4 border-t border-[#EAEAEC]/60 mt-2">
+                  <div className="flex gap-4 items-center">
                     <div className="text-center"><p className="text-[10px] font-bold uppercase tracking-widest text-[#A1A1AA]">Total</p><p className="text-lg font-medium text-[#111111] tracking-tight">${cartTotal.toFixed(2)}</p></div>
                     <div className="text-center"><p className="text-[10px] font-bold uppercase tracking-widest text-[#A1A1AA]">Ganancia</p><p className={`text-lg font-medium tracking-tight ${cartProfit > 0 ? 'text-[#16A34A]' : 'text-red-500'}`}>${cartProfit.toFixed(2)}</p></div>
                   </div>
-                  <button type="button" onClick={handleConfirmCart} disabled={cart.some(c => !c.salePrice || parseFloat(c.salePrice) <= 0)} className="w-full sm:w-auto bg-[#1A1A1A] hover:bg-black text-white px-8 py-3 rounded-[1.25rem] font-medium transition-all shadow-md shadow-black/10 active:scale-95 touch-manipulation disabled:bg-[#F4F5F4] disabled:text-[#A1A1AA] disabled:cursor-not-allowed">Confirmar Venta{cart.length > 1 ? ` (${cart.length})` : ''}</button>
+                  <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
+                    <input type="text" placeholder="Cliente (Opcional)" value={clientName} onChange={e => setClientName(e.target.value)} className="w-full sm:w-auto px-4 py-3 bg-white border border-[#EAEAEC] rounded-[1.25rem] focus:ring-2 focus:ring-[#C8F169] focus:border-[#C8F169] outline-none text-sm transition-all shadow-[inset_0_2px_4px_rgba(0,0,0,0.02)]" />
+                    <button type="button" onClick={handleConfirmCart} disabled={cart.some(c => !c.salePrice || parseFloat(c.salePrice) <= 0)} className="w-full sm:w-auto bg-[#1A1A1A] hover:bg-black text-white px-8 py-3 rounded-[1.25rem] font-medium transition-all shadow-md shadow-black/10 active:scale-95 touch-manipulation disabled:bg-[#F4F5F4] disabled:text-[#A1A1AA] disabled:cursor-not-allowed">Confirmar Venta{cart.length > 1 ? ` (${cart.length})` : ''}</button>
+                  </div>
                 </div>
               </div>
             )}
@@ -1053,10 +1325,11 @@ function RecordSaleView({ products, userId, onRefresh }: { products: Product[]; 
               </div>
               <button type="button" onClick={() => setSelectedProduct(null)} className="text-sm font-medium text-[#111111] hover:text-black transition-colors bg-white border border-[#EAEAEC] shadow-sm px-5 py-2.5 rounded-[1rem] w-full md:w-auto touch-manipulation">Cambiar Producto</button>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 md:gap-5 w-full">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-5 w-full">
               <div><label className="block text-sm font-medium text-[#71717A] mb-2">Costo para ti ($)</label><div className="relative"><DollarSign className="absolute left-4 top-3.5 text-[#A1A1AA]" size={18} /><input type="number" step="0.01" required value={saleCost} onChange={(e) => setSaleCost(e.target.value)} className="w-full pl-11 pr-4 py-3 bg-[#F9FAFA] border border-[#EAEAEC] rounded-[1.25rem] focus:ring-2 focus:ring-[#C8F169] focus:border-[#C8F169] transition-all outline-none shadow-[inset_0_2px_4px_rgba(0,0,0,0.02)] text-base" placeholder="0.00" /></div></div>
               <div><label className="block text-sm font-medium text-[#71717A] mb-2">Precio de Venta ($)</label><div className="relative"><DollarSign className="absolute left-4 top-3.5 text-[#A1A1AA]" size={18} /><input type="number" step="0.01" required value={salePrice} onChange={(e) => setSalePrice(e.target.value)} className="w-full pl-11 pr-4 py-3 bg-[#F9FAFA] border border-[#EAEAEC] rounded-[1.25rem] focus:ring-2 focus:ring-[#C8F169] focus:border-[#C8F169] transition-all outline-none shadow-[inset_0_2px_4px_rgba(0,0,0,0.02)] text-base" placeholder="0.00" /></div></div>
               <div><label className="block text-sm font-medium text-[#71717A] mb-2">Cantidad Vendida</label><input type="number" min="1" max={selectedProduct.stock} required value={quantity} onChange={(e) => setQuantity(parseInt(e.target.value) || 1)} className="w-full px-4 py-3 bg-[#F9FAFA] border border-[#EAEAEC] rounded-[1.25rem] focus:ring-2 focus:ring-[#C8F169] focus:border-[#C8F169] transition-all outline-none shadow-[inset_0_2px_4px_rgba(0,0,0,0.02)] text-base" /></div>
+              <div><label className="block text-sm font-medium text-[#71717A] mb-2">Cliente (Opcional)</label><input type="text" value={clientName} onChange={(e) => setClientName(e.target.value)} className="w-full px-4 py-3 bg-[#F9FAFA] border border-[#EAEAEC] rounded-[1.25rem] focus:ring-2 focus:ring-[#C8F169] focus:border-[#C8F169] transition-all outline-none shadow-[inset_0_2px_4px_rgba(0,0,0,0.02)] text-base" placeholder="Ej. Juan Pérez" /></div>
             </div>
             {salePrice && saleCost && (
               <div className="bg-[#F9FAFA] p-5 rounded-[1.5rem] flex justify-between items-center border border-[#EAEAEC]">
@@ -1107,50 +1380,74 @@ function RecordSaleView({ products, userId, onRefresh }: { products: Product[]; 
 }
 
 function DashboardView({ stats, sales, products, onRefresh }: { stats: DashboardStats; sales: Sale[]; products: Product[]; onRefresh: () => void }) {
-  const [editingSale, setEditingSale] = useState<Sale | null>(null);
-  const [editFields, setEditFields] = useState({ salePrice: '', costAtSale: '', quantity: '', date: '' });
+  const [editingGroup, setEditingGroup] = useState<Sale[] | null>(null);
+  const [editFields, setEditFields] = useState({ salePrice: '', costAtSale: '', quantity: '', date: '', clientName: '' });
   const [editSuccess, setEditSuccess] = useState('');
   const [confirmDeleteSaleId, setConfirmDeleteSaleId] = useState<string | null>(null);
 
-  const handleOpenEdit = (sale: Sale) => {
-    setEditingSale(sale);
+  const handleOpenEdit = (group: Sale[]) => {
+    setEditingGroup(group);
+    const firstSale = group[0];
     setEditFields({
-      salePrice: String(sale.salePrice),
-      costAtSale: String(sale.costAtSale),
-      quantity: String(sale.quantity),
-      date: sale.date ? sale.date.slice(0, 10) : '',
+      salePrice: String(firstSale.salePrice),
+      costAtSale: String(firstSale.costAtSale),
+      quantity: String(firstSale.quantity),
+      date: firstSale.date ? firstSale.date.slice(0, 10) : '',
+      clientName: firstSale.clientName || 'Cliente Anónimo',
     });
   };
 
   const handleEditSave = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (!editingSale || !supabase) return;
+    if (!editingGroup || !supabase) return;
     try {
-      await supabase.from('sales').update({
-        sale_price: parseFloat(editFields.salePrice),
-        cost_at_sale: parseFloat(editFields.costAtSale),
-        quantity: parseInt(editFields.quantity),
-        date: new Date(editFields.date).toISOString(),
-      }).eq('id', editingSale.id).throwOnError();
-      setEditingSale(null);
+      const isMulti = editingGroup.length > 1;
+      for (const sale of editingGroup) {
+        const updates: any = {
+          date: new Date(editFields.date).toISOString(),
+          client_name: editFields.clientName.trim() || 'Cliente Anónimo',
+        };
+        if (!isMulti) {
+          updates.sale_price = parseFloat(editFields.salePrice);
+          updates.cost_at_sale = parseFloat(editFields.costAtSale);
+          updates.quantity = parseInt(editFields.quantity);
+        }
+        await supabase.from('sales').update(updates).eq('id', sale.id).throwOnError();
+      }
+      setEditingGroup(null);
       onRefresh();
       setEditSuccess('¡Venta actualizada con éxito!');
       setTimeout(() => setEditSuccess(''), 3000);
     } catch (err) { console.error(err); alert("Error actualizando venta."); }
   };
 
-  const handleDeleteSale = async (sale: Sale) => {
+  const handleDeleteGroup = async (group: Sale[]) => {
     if (!supabase) return;
     try {
-      const product = products.find(p => p.id === sale.productId);
-      if (product) {
-        await supabase.from('products').update({ stock: product.stock + sale.quantity }).eq('id', product.id).throwOnError();
+      for (const sale of group) {
+        const product = products.find(p => p.id === sale.productId);
+        if (product) {
+          await supabase.from('products').update({ stock: product.stock + sale.quantity }).eq('id', product.id).throwOnError();
+        }
+        await supabase.from('sales').delete().eq('id', sale.id).throwOnError();
       }
-      await supabase.from('sales').delete().eq('id', sale.id).throwOnError();
       setConfirmDeleteSaleId(null);
       onRefresh();
     } catch (err) { console.error(err); alert("Error eliminando venta."); }
   };
+
+  const groupedSales = useMemo(() => {
+    const groups: Record<string, Sale[]> = {};
+    sales.forEach(sale => {
+      // Agrupamos por fecha (exacta) y cliente, esto permite juntar ventas múltiples registradas en la misma transacción
+      const key = `${sale.date}_${sale.clientName || 'Cliente Anónimo'}`; 
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(sale);
+    });
+    return Object.values(groups).sort((a, b) => new Date(b[0].date).getTime() - new Date(a[0].date).getTime());
+  }, [sales]);
+
+  const isEditingMulti = editingGroup && editingGroup.length > 1;
 
   return (
     <div className="space-y-6 md:space-y-8 w-full">
@@ -1164,26 +1461,45 @@ function DashboardView({ stats, sales, products, onRefresh }: { stats: Dashboard
         <div className="px-4 md:px-6 py-5 md:py-6 border-b border-[#EAEAEC]"><h3 className="text-lg font-medium text-[#111111] tracking-tight">Últimas Ventas</h3></div>
         <div className="overflow-x-auto w-full" style={{ WebkitOverflowScrolling: 'touch' } as React.CSSProperties}><table className="w-full text-left border-collapse min-w-[600px]">
           <thead><tr className="bg-white text-[#A1A1AA] text-[11px] font-bold uppercase tracking-widest border-b border-[#EAEAEC]"><th className="px-4 md:px-6 py-4 md:py-5">Fecha</th><th className="px-4 md:px-6 py-4 md:py-5">Producto</th><th className="px-4 md:px-6 py-4 md:py-5">Cant.</th><th className="px-4 md:px-6 py-4 md:py-5">Venta</th><th className="px-4 md:px-6 py-4 md:py-5">Ganancia</th><th className="px-4 md:px-6 py-4 md:py-5"></th></tr></thead>
-          <tbody className="divide-y divide-[#EAEAEC]/60">{sales.length === 0 ? <tr><td colSpan={6} className="px-6 py-10 text-center text-[#71717A] font-medium">No hay ventas registradas.</td></tr> : sales.map(sale => {
-              const product = products.find(p => p.id === sale.productId);
-              const profit = ((sale.salePrice || 0) - (sale.costAtSale || 0)) * (sale.quantity || 0);
+          <tbody className="divide-y divide-[#EAEAEC]/60">
+            {groupedSales.length === 0 ? <tr><td colSpan={6} className="px-6 py-10 text-center text-[#71717A] font-medium">No hay ventas registradas.</td></tr> : groupedSales.map(group => {
+              const firstSale = group[0];
+              const isMulti = group.length > 1;
+              const totalQty = group.reduce((sum, s) => sum + (s.quantity || 0), 0);
+              const totalSale = group.reduce((sum, s) => sum + ((s.salePrice || 0) * (s.quantity || 0)), 0);
+              const totalProfit = group.reduce((sum, s) => sum + (((s.salePrice || 0) - (s.costAtSale || 0)) * (s.quantity || 0)), 0);
+
               return (
-                <tr key={sale.id} className="hover:bg-[#F9FAFA] transition-colors">
-                  <td className="px-4 md:px-6 py-4 md:py-5 text-sm text-[#71717A] font-medium">{new Date(sale.date).toLocaleDateString()}</td>
-                  <td className="px-4 md:px-6 py-4 md:py-5 font-medium text-[#111111]">{product ? product.name : 'Producto Eliminado'}</td>
-                  <td className="px-4 md:px-6 py-4 md:py-5 text-[#71717A] font-medium">{sale.quantity}</td>
-                  <td className="px-4 md:px-6 py-4 md:py-5 font-medium text-[#111111]">${((sale.salePrice || 0) * (sale.quantity || 0)).toFixed(2)}</td>
-                  <td className="px-4 md:px-6 py-4 md:py-5 font-medium text-[#16A34A]">+${profit.toFixed(2)}</td>
+                <tr key={firstSale.id} className="hover:bg-[#F9FAFA] transition-colors align-top">
+                  <td className="px-4 md:px-6 py-4 md:py-5 text-sm text-[#71717A] font-medium">{new Date(firstSale.date).toLocaleDateString()}</td>
                   <td className="px-4 md:px-6 py-4 md:py-5">
-                    {confirmDeleteSaleId === sale.id ? (
+                    {firstSale.clientName && (
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-[#A1A1AA] mb-0.5">Cliente: <span className="text-[#111111]">{firstSale.clientName}</span></p>
+                    )}
+                    <p className="font-medium text-[#111111]">
+                      {isMulti ? `Pedido Agrupado (${group.length} prods.)` : (products.find(p => p.id === firstSale.productId)?.name || 'Producto Eliminado')}
+                    </p>
+                    {isMulti && (
+                      <div className="text-xs text-[#71717A] mt-1 space-y-0.5">
+                        {group.map(s => (
+                          <p key={s.id}>• {s.quantity}x {products.find(p => p.id === s.productId)?.name || 'Eliminado'}</p>
+                        ))}
+                      </div>
+                    )}
+                  </td>
+                  <td className="px-4 md:px-6 py-4 md:py-5 text-[#71717A] font-medium">{totalQty}</td>
+                  <td className="px-4 md:px-6 py-4 md:py-5 font-medium text-[#111111]">${totalSale.toFixed(2)}</td>
+                  <td className="px-4 md:px-6 py-4 md:py-5 font-medium text-[#16A34A]">+${totalProfit.toFixed(2)}</td>
+                  <td className="px-4 md:px-6 py-4 md:py-5">
+                    {confirmDeleteSaleId === firstSale.id ? (
                       <div className="flex items-center gap-1.5">
-                        <button onClick={() => handleDeleteSale(sale)} className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-bold rounded-[0.75rem] transition-all active:scale-95 touch-manipulation">Sí</button>
+                        <button onClick={() => handleDeleteGroup(group)} className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-bold rounded-[0.75rem] transition-all active:scale-95 touch-manipulation">Sí</button>
                         <button onClick={() => setConfirmDeleteSaleId(null)} className="px-3 py-1.5 bg-[#F4F5F4] hover:bg-[#EAEAEC] text-[#71717A] text-xs font-bold rounded-[0.75rem] transition-colors touch-manipulation">No</button>
                       </div>
                     ) : (
                       <div className="flex items-center gap-1">
-                        <button onClick={() => handleOpenEdit(sale)} className="p-2 rounded-[0.75rem] text-[#A1A1AA] hover:text-[#111111] hover:bg-[#EAEAEC] transition-colors touch-manipulation"><Pencil size={15} /></button>
-                        <button onClick={() => setConfirmDeleteSaleId(sale.id)} className="p-2 rounded-[0.75rem] text-[#A1A1AA] hover:text-red-500 hover:bg-red-50 transition-colors touch-manipulation"><Trash2 size={15} /></button>
+                        <button onClick={() => handleOpenEdit(group)} className="p-2 rounded-[0.75rem] text-[#A1A1AA] hover:text-[#111111] hover:bg-[#EAEAEC] transition-colors touch-manipulation"><Pencil size={15} /></button>
+                        <button onClick={() => setConfirmDeleteSaleId(firstSale.id)} className="p-2 rounded-[0.75rem] text-[#A1A1AA] hover:text-red-500 hover:bg-red-50 transition-colors touch-manipulation"><Trash2 size={15} /></button>
                       </div>
                     )}
                   </td>
@@ -1196,40 +1512,53 @@ function DashboardView({ stats, sales, products, onRefresh }: { stats: Dashboard
       {editSuccess && <div className="p-4 bg-[#E8F8B6]/50 text-[#4A6310] border border-[#C8F169]/40 rounded-[1.25rem] text-center font-medium animate-in fade-in slide-in-from-bottom-2">{editSuccess}</div>}
 
       {/* --- MODAL EDITAR VENTA --- */}
-      {editingSale && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/30 backdrop-blur-sm animate-in fade-in" onClick={() => { setEditingSale(null); onRefresh(); }}>
+      {editingGroup && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/30 backdrop-blur-sm animate-in fade-in" onClick={() => { setEditingGroup(null); onRefresh(); }}>
           <div className="bg-white rounded-[2rem] shadow-[0_24px_60px_rgba(0,0,0,0.12)] border border-[#EAEAEC] w-full max-w-lg p-6 md:p-8 animate-in slide-in-from-bottom-4" onClick={e => e.stopPropagation()}>
             <div className="flex justify-between items-center mb-6">
-              <h3 className="text-xl font-medium text-[#111111] tracking-tight">Editar Venta</h3>
-              <button onClick={() => setEditingSale(null)} className="p-2 rounded-[0.75rem] text-[#A1A1AA] hover:text-[#111111] hover:bg-[#EAEAEC] transition-colors touch-manipulation"><X size={18} /></button>
+              <h3 className="text-xl font-medium text-[#111111] tracking-tight">{isEditingMulti ? 'Editar Pedido Agrupado' : 'Editar Venta'}</h3>
+              <button onClick={() => setEditingGroup(null)} className="p-2 rounded-[0.75rem] text-[#A1A1AA] hover:text-[#111111] hover:bg-[#EAEAEC] transition-colors touch-manipulation"><X size={18} /></button>
             </div>
+            
+            {isEditingMulti && (
+              <p className="text-sm font-medium text-[#71717A] mb-4">Estás editando un pedido agrupado. Solo puedes modificar la fecha y el nombre del cliente general.</p>
+            )}
+
             <form onSubmit={handleEditSave} className="space-y-5">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-[#71717A] mb-2">Costo para ti ($)</label>
-                  <div className="relative"><DollarSign className="absolute left-4 top-3.5 text-[#A1A1AA]" size={18} /><input type="number" step="0.01" required value={editFields.costAtSale} onChange={e => setEditFields({...editFields, costAtSale: e.target.value})} className="w-full pl-11 pr-4 py-3 bg-[#F9FAFA] border border-[#EAEAEC] rounded-[1.25rem] focus:ring-2 focus:ring-[#C8F169] focus:border-[#C8F169] transition-all outline-none shadow-[inset_0_2px_4px_rgba(0,0,0,0.02)] text-base" placeholder="0.00" /></div>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-[#71717A] mb-2">Precio de Venta ($)</label>
-                  <div className="relative"><DollarSign className="absolute left-4 top-3.5 text-[#A1A1AA]" size={18} /><input type="number" step="0.01" required value={editFields.salePrice} onChange={e => setEditFields({...editFields, salePrice: e.target.value})} className="w-full pl-11 pr-4 py-3 bg-[#F9FAFA] border border-[#EAEAEC] rounded-[1.25rem] focus:ring-2 focus:ring-[#C8F169] focus:border-[#C8F169] transition-all outline-none shadow-[inset_0_2px_4px_rgba(0,0,0,0.02)] text-base" placeholder="0.00" /></div>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-[#71717A] mb-2">Cantidad Vendida</label>
-                  <input type="number" min="1" required value={editFields.quantity} onChange={e => setEditFields({...editFields, quantity: e.target.value})} className="w-full px-4 py-3 bg-[#F9FAFA] border border-[#EAEAEC] rounded-[1.25rem] focus:ring-2 focus:ring-[#C8F169] focus:border-[#C8F169] transition-all outline-none shadow-[inset_0_2px_4px_rgba(0,0,0,0.02)] text-base" />
-                </div>
+                {!isEditingMulti && (
+                  <>
+                    <div>
+                      <label className="block text-sm font-medium text-[#71717A] mb-2">Costo para ti ($)</label>
+                      <div className="relative"><DollarSign className="absolute left-4 top-3.5 text-[#A1A1AA]" size={18} /><input type="number" step="0.01" required value={editFields.costAtSale} onChange={e => setEditFields({...editFields, costAtSale: e.target.value})} className="w-full pl-11 pr-4 py-3 bg-[#F9FAFA] border border-[#EAEAEC] rounded-[1.25rem] focus:ring-2 focus:ring-[#C8F169] focus:border-[#C8F169] transition-all outline-none shadow-[inset_0_2px_4px_rgba(0,0,0,0.02)] text-base" placeholder="0.00" /></div>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-[#71717A] mb-2">Precio de Venta ($)</label>
+                      <div className="relative"><DollarSign className="absolute left-4 top-3.5 text-[#A1A1AA]" size={18} /><input type="number" step="0.01" required value={editFields.salePrice} onChange={e => setEditFields({...editFields, salePrice: e.target.value})} className="w-full pl-11 pr-4 py-3 bg-[#F9FAFA] border border-[#EAEAEC] rounded-[1.25rem] focus:ring-2 focus:ring-[#C8F169] focus:border-[#C8F169] transition-all outline-none shadow-[inset_0_2px_4px_rgba(0,0,0,0.02)] text-base" placeholder="0.00" /></div>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-[#71717A] mb-2">Cantidad Vendida</label>
+                      <input type="number" min="1" required value={editFields.quantity} onChange={e => setEditFields({...editFields, quantity: e.target.value})} className="w-full px-4 py-3 bg-[#F9FAFA] border border-[#EAEAEC] rounded-[1.25rem] focus:ring-2 focus:ring-[#C8F169] focus:border-[#C8F169] transition-all outline-none shadow-[inset_0_2px_4px_rgba(0,0,0,0.02)] text-base" />
+                    </div>
+                  </>
+                )}
                 <div>
                   <label className="block text-sm font-medium text-[#71717A] mb-2">Fecha</label>
                   <input type="date" required value={editFields.date} onChange={e => setEditFields({...editFields, date: e.target.value})} className="w-full px-4 py-3 bg-[#F9FAFA] border border-[#EAEAEC] rounded-[1.25rem] focus:ring-2 focus:ring-[#C8F169] focus:border-[#C8F169] transition-all outline-none shadow-[inset_0_2px_4px_rgba(0,0,0,0.02)] text-base" />
                 </div>
+                <div className={!isEditingMulti ? "sm:col-span-2" : ""}>
+                  <label className="block text-sm font-medium text-[#71717A] mb-2">Cliente</label>
+                  <input type="text" required value={editFields.clientName} onChange={e => setEditFields({...editFields, clientName: e.target.value})} className="w-full px-4 py-3 bg-[#F9FAFA] border border-[#EAEAEC] rounded-[1.25rem] focus:ring-2 focus:ring-[#C8F169] focus:border-[#C8F169] transition-all outline-none shadow-[inset_0_2px_4px_rgba(0,0,0,0.02)] text-base" placeholder="Cliente Anónimo" />
+                </div>
               </div>
-              {editFields.salePrice && editFields.costAtSale && (
+              {!isEditingMulti && editFields.salePrice && editFields.costAtSale && (
                 <div className="bg-[#F9FAFA] p-4 rounded-[1.25rem] flex justify-between items-center border border-[#EAEAEC]">
                   <span className="text-[#71717A] font-medium text-sm">Ganancia (por unidad):</span>
                   <span className={`font-medium tracking-tight text-lg ${(parseFloat(editFields.salePrice) - parseFloat(editFields.costAtSale)) > 0 ? 'text-[#16A34A]' : 'text-red-500'}`}>${(parseFloat(editFields.salePrice) - parseFloat(editFields.costAtSale)).toFixed(2)}</span>
                 </div>
               )}
               <div className="flex flex-col sm:flex-row justify-end gap-3 pt-2 border-t border-[#EAEAEC]/60">
-                <button type="button" onClick={() => { setEditingSale(null); onRefresh(); }} className="w-full sm:w-auto px-6 py-3 text-[#71717A] hover:text-[#111111] bg-[#F4F5F4] hover:bg-[#EAEAEC] rounded-[1.25rem] font-medium transition-colors touch-manipulation">Cancelar</button>
+                <button type="button" onClick={() => { setEditingGroup(null); onRefresh(); }} className="w-full sm:w-auto px-6 py-3 text-[#71717A] hover:text-[#111111] bg-[#F4F5F4] hover:bg-[#EAEAEC] rounded-[1.25rem] font-medium transition-colors touch-manipulation">Cancelar</button>
                 <button type="submit" className="w-full sm:w-auto bg-[#1A1A1A] hover:bg-black text-white px-8 py-3 rounded-[1.25rem] transition-all font-medium shadow-md shadow-black/10 active:scale-95 touch-manipulation">Guardar Cambios</button>
               </div>
             </form>
@@ -1241,6 +1570,7 @@ function DashboardView({ stats, sales, products, onRefresh }: { stats: Dashboard
 }
 
 function InventoryView({ products, userId, sales, restocks, onRefresh }: { products: Product[]; userId?: string; sales: Sale[]; restocks: Restock[]; onRefresh: () => void }) {
+  const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
   const [showAdd, setShowAdd] = useState<boolean>(false);
   const [newProduct, setNewProduct] = useState<NewProductState>({ name: '', cost: '', price: '', stock: '', imagePreview: null });
   const [detailProduct, setDetailProduct] = useState<Product | null>(null);
@@ -1459,11 +1789,28 @@ function InventoryView({ products, userId, sales, restocks, onRefresh }: { produ
     <div className="space-y-6 w-full">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <h2 className="text-[1.75rem] font-medium text-[#111111] tracking-tight">Inventario de Productos</h2>
-        <button onClick={() => setShowAdd(!showAdd)} className="bg-[#1A1A1A] hover:bg-black text-white px-6 py-3 sm:py-3 rounded-[1.25rem] flex items-center justify-center space-x-2 transition-all shadow-md shadow-black/10 active:scale-95 font-medium w-full sm:w-auto touch-manipulation"><Plus size={18} /><span>Nuevo Producto</span></button>
+        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 w-full sm:w-auto">
+          <div className="flex bg-[#F9FAFA] border border-[#EAEAEC] rounded-[1rem] p-1 flex-shrink-0">
+            <button onClick={() => setViewMode('list')} className={`p-2 rounded-[0.75rem] transition-all touch-manipulation ${viewMode === 'list' ? 'bg-white shadow-sm border border-[#EAEAEC] text-[#111111]' : 'text-[#A1A1AA] hover:text-[#111111]'}`}><List size={18} /></button>
+            <button onClick={() => setViewMode('grid')} className={`p-2 rounded-[0.75rem] transition-all touch-manipulation ${viewMode === 'grid' ? 'bg-white shadow-sm border border-[#EAEAEC] text-[#111111]' : 'text-[#A1A1AA] hover:text-[#111111]'}`}><LayoutGrid size={18} /></button>
+          </div>
+          <button onClick={() => setShowAdd(!showAdd)} className="bg-[#1A1A1A] hover:bg-black text-white px-6 py-3 sm:py-3 rounded-[1.25rem] flex items-center justify-center space-x-2 transition-all shadow-md shadow-black/10 active:scale-95 font-medium w-full sm:w-auto touch-manipulation"><Plus size={18} /><span>Nuevo Producto</span></button>
+        </div>
       </div>
+
       {showAdd && (
         <form onSubmit={handleAdd} className="bg-white p-4 md:p-8 rounded-[2rem] border border-[#EAEAEC] shadow-[0_8px_30px_rgb(0,0,0,0.04)] grid grid-cols-1 md:grid-cols-5 gap-4 md:gap-5 items-end animate-in fade-in slide-in-from-top-4 w-full">
-          <div className="md:col-span-2"><label className="block text-sm font-medium text-[#71717A] mb-2">Nombre (Tipo de media)</label><input type="text" required value={newProduct.name} onChange={e => setNewProduct({...newProduct, name: e.target.value})} className="w-full px-4 py-3 bg-[#F9FAFA] border border-[#EAEAEC] rounded-[1.25rem] focus:ring-2 focus:ring-[#C8F169] focus:border-[#C8F169] transition-all outline-none shadow-[inset_0_2px_4px_rgba(0,0,0,0.02)] text-base" placeholder="Ej. Medias de compresión" /></div>
+          <div className="md:col-span-2">
+            <label className="block text-sm font-medium text-[#71717A] mb-2">Nombre (Tipo de media)</label>
+            <input type="text" required value={newProduct.name} onChange={e => setNewProduct({...newProduct, name: e.target.value})} className="w-full px-4 py-3 bg-[#F9FAFA] border border-[#EAEAEC] rounded-[1.25rem] focus:ring-2 focus:ring-[#C8F169] focus:border-[#C8F169] transition-all outline-none shadow-[inset_0_2px_4px_rgba(0,0,0,0.02)] text-base" placeholder="Ej. Medias de compresión" />
+            {/* ✨ SUGERIDOR DE NOMBRE */}
+            <NameSuggester
+              imagePreview={newProduct.imagePreview}
+              currentName={newProduct.name}
+              existingNames={products.map(p => p.name)}
+              onSelect={(name) => setNewProduct({ ...newProduct, name })}
+            />
+          </div>
           <div><label className="block text-sm font-medium text-[#71717A] mb-2">Costo ($)</label><input type="number" step="0.01" required value={newProduct.cost} onChange={e => setNewProduct({...newProduct, cost: e.target.value})} className="w-full px-4 py-3 bg-[#F9FAFA] border border-[#EAEAEC] rounded-[1.25rem] focus:ring-2 focus:ring-[#C8F169] focus:border-[#C8F169] transition-all outline-none shadow-[inset_0_2px_4px_rgba(0,0,0,0.02)] text-base" placeholder="0.00" /></div>
           <div><label className="block text-sm font-medium text-[#71717A] mb-2">Precio Venta ($)</label><input type="number" step="0.01" required value={newProduct.price} onChange={e => setNewProduct({...newProduct, price: e.target.value})} className="w-full px-4 py-3 bg-[#F9FAFA] border border-[#EAEAEC] rounded-[1.25rem] focus:ring-2 focus:ring-[#C8F169] focus:border-[#C8F169] transition-all outline-none shadow-[inset_0_2px_4px_rgba(0,0,0,0.02)] text-base" placeholder="0.00" /></div>
           <div><label className="block text-sm font-medium text-[#71717A] mb-2">Stock Inicial</label><input type="number" required value={newProduct.stock} onChange={e => setNewProduct({...newProduct, stock: e.target.value})} className="w-full px-4 py-3 bg-[#F9FAFA] border border-[#EAEAEC] rounded-[1.25rem] focus:ring-2 focus:ring-[#C8F169] focus:border-[#C8F169] transition-all outline-none shadow-[inset_0_2px_4px_rgba(0,0,0,0.02)] text-base" placeholder="0" /></div>
@@ -1471,11 +1818,67 @@ function InventoryView({ products, userId, sales, restocks, onRefresh }: { produ
           <div className="md:col-span-5 flex flex-col sm:flex-row justify-end mt-4 pt-6 border-t border-[#EAEAEC]/60 gap-3"><button type="button" onClick={() => setShowAdd(false)} className="w-full sm:w-auto px-6 py-3 sm:py-3 text-[#71717A] hover:text-[#111111] bg-[#F4F5F4] hover:bg-[#EAEAEC] rounded-[1.25rem] font-medium transition-colors touch-manipulation">Cancelar</button><button type="submit" className="w-full sm:w-auto bg-[#1A1A1A] hover:bg-black text-white px-8 py-3 sm:py-3 rounded-[1.25rem] transition-all font-medium shadow-md shadow-black/10 active:scale-95 touch-manipulation">Guardar Producto</button></div>
         </form>
       )}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6 w-full">
-        {products.length === 0 ? <div className="col-span-full text-center py-10 text-[#71717A] font-medium">Tu inventario está vacío. ¡Agrega tu primer producto!</div> : products.map(product => (
-          <div key={product.id} onClick={() => handleOpenDetail(product)} className="bg-white p-5 rounded-[2rem] shadow-[0_4px_24px_rgba(0,0,0,0.02)] border border-[#EAEAEC] hover:shadow-[0_8px_30px_rgb(0,0,0,0.06)] transition-all duration-300 flex flex-col h-full cursor-pointer active:scale-[0.98]"><div className="flex justify-between items-start mb-5 gap-2"><h3 className="font-medium text-[#111111] text-base md:text-lg leading-tight tracking-tight flex-1">{product.name}</h3><span className={`px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest rounded-full flex-shrink-0 ${product.stock > 10 ? 'bg-[#E8F8B6]/50 text-[#4A6310]' : product.stock > 0 ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-600'}`}>{product.stock} en stock</span></div><div className="w-full h-40 bg-[#F9FAFA] rounded-[1.25rem] mb-5 flex items-center justify-center border border-[#EAEAEC] overflow-hidden relative">{product.imageUrl ? <img src={product.imageUrl} alt={product.name} className="w-full h-full object-cover" /> : <span className="text-[#A1A1AA] text-sm font-medium tracking-wide">[Sin imagen]</span>}</div><div className="mt-auto space-y-2"><div className="flex justify-between items-center text-sm bg-[#F9FAFA] p-3 rounded-[1rem] border border-[#EAEAEC]"><span className="text-[#71717A] font-medium text-xs">Costo base:</span><span className="font-medium text-[#111111]">${(product.cost || 0).toFixed(2)}</span></div><div className="flex justify-between items-center text-sm bg-white p-3 rounded-[1rem] border border-[#EAEAEC]"><span className="text-[#71717A] font-medium text-xs">Precio Venta:</span><span className="font-medium tracking-tight text-[#111111]">${(product.price || 0).toFixed(2)}</span></div></div></div>
-        ))}
-      </div>
+
+      {products.length === 0 ? (
+        <div className="col-span-full text-center py-10 text-[#71717A] font-medium">Tu inventario está vacío. ¡Agrega tu primer producto!</div>
+      ) : viewMode === 'grid' ? (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6 w-full animate-in fade-in">
+          {products.map(product => (
+            <div key={product.id} onClick={() => handleOpenDetail(product)} className="bg-white p-5 rounded-[2rem] shadow-[0_4px_24px_rgba(0,0,0,0.02)] border border-[#EAEAEC] hover:shadow-[0_8px_30px_rgb(0,0,0,0.06)] transition-all duration-300 flex flex-col h-full cursor-pointer active:scale-[0.98]"><div className="flex justify-between items-start mb-5 gap-2"><h3 className="font-medium text-[#111111] text-base md:text-lg leading-tight tracking-tight flex-1">{product.name}</h3><span className={`px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest rounded-full flex-shrink-0 ${product.stock > 10 ? 'bg-[#E8F8B6]/50 text-[#4A6310]' : product.stock > 0 ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-600'}`}>{product.stock} en stock</span></div><div className="w-full h-40 bg-[#F9FAFA] rounded-[1.25rem] mb-5 flex items-center justify-center border border-[#EAEAEC] overflow-hidden relative">{product.imageUrl ? <img src={product.imageUrl} alt={product.name} className="w-full h-full object-cover" /> : <span className="text-[#A1A1AA] text-sm font-medium tracking-wide">[Sin imagen]</span>}</div><div className="mt-auto space-y-2"><div className="flex justify-between items-center text-sm bg-[#F9FAFA] p-3 rounded-[1rem] border border-[#EAEAEC]"><span className="text-[#71717A] font-medium text-xs">Costo base:</span><span className="font-medium text-[#111111]">${(product.cost || 0).toFixed(2)}</span></div><div className="flex justify-between items-center text-sm bg-white p-3 rounded-[1rem] border border-[#EAEAEC]"><span className="text-[#71717A] font-medium text-xs">Precio Venta:</span><span className="font-medium tracking-tight text-[#111111]">${(product.price || 0).toFixed(2)}</span></div></div></div>
+          ))}
+        </div>
+      ) : (
+        <div className="bg-white rounded-[2rem] shadow-[0_8px_30px_rgb(0,0,0,0.04)] border border-[#EAEAEC] overflow-hidden w-full animate-in fade-in">
+          <div className="overflow-x-auto w-full" style={{ WebkitOverflowScrolling: 'touch' } as React.CSSProperties}>
+            <table className="w-full text-left border-collapse min-w-[600px]">
+              <thead>
+                <tr className="bg-white text-[#A1A1AA] text-[11px] font-bold uppercase tracking-widest border-b border-[#EAEAEC]">
+                  <th className="px-4 md:px-6 py-4 md:py-5 w-20">Imagen</th>
+                  <th className="px-4 md:px-6 py-4 md:py-5">Producto</th>
+                  <th className="px-4 md:px-6 py-4 md:py-5">Stock</th>
+                  <th className="px-4 md:px-6 py-4 md:py-5">Costo Base</th>
+                  <th className="px-4 md:px-6 py-4 md:py-5">Precio Venta</th>
+                  <th className="px-4 md:px-6 py-4 md:py-5"></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#EAEAEC]/60">
+                {products.map(product => (
+                  <tr key={product.id} className="hover:bg-[#F9FAFA] transition-colors cursor-pointer group" onClick={() => handleOpenDetail(product)}>
+                    <td className="px-4 md:px-6 py-3 md:py-4" onClick={(e) => e.stopPropagation()}>
+                      <div
+                        className="w-12 h-12 rounded-[0.75rem] bg-[#F9FAFA] border border-[#EAEAEC] flex items-center justify-center overflow-hidden relative cursor-zoom-in group/img"
+                        onClick={() => product.imageUrl && setLightboxUrl(product.imageUrl)}
+                      >
+                        {product.imageUrl ? (
+                          <>
+                            <img src={product.imageUrl} alt={product.name} className="w-full h-full object-cover" />
+                            <div className="absolute inset-0 bg-black/0 group-hover/img:bg-black/20 transition-all flex items-center justify-center">
+                              <ZoomIn size={14} className="text-white opacity-0 group-hover/img:opacity-100 transition-opacity" />
+                            </div>
+                          </>
+                        ) : (
+                          <Package size={16} className="text-[#A1A1AA]" />
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-4 md:px-6 py-3 md:py-4 font-medium text-[#111111]">{product.name}</td>
+                    <td className="px-4 md:px-6 py-3 md:py-4">
+                      <span className={`px-3 py-1 text-[10px] font-bold uppercase tracking-widest rounded-full flex-shrink-0 ${product.stock > 10 ? 'bg-[#E8F8B6]/50 text-[#4A6310]' : product.stock > 0 ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-600'}`}>
+                        {product.stock} en stock
+                      </span>
+                    </td>
+                    <td className="px-4 md:px-6 py-3 md:py-4 font-medium text-[#71717A]">${(product.cost || 0).toFixed(2)}</td>
+                    <td className="px-4 md:px-6 py-3 md:py-4 font-medium text-[#111111]">${(product.price || 0).toFixed(2)}</td>
+                    <td className="px-4 md:px-6 py-3 md:py-4 text-right">
+                       <button className="text-[#71717A] hover:text-[#111111] font-medium text-xs px-4 py-2 bg-white border border-[#EAEAEC] hover:border-[#C8F169] rounded-[1rem] transition-colors touch-manipulation">Ver Detalles</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* --- MODAL DETALLE / EDITAR PRODUCTO --- */}
       {detailProduct && (
@@ -1498,6 +1901,13 @@ function InventoryView({ products, userId, sales, restocks, onRefresh }: { produ
                 <input type="text" required value={editName} onChange={e => setEditName(e.target.value)} className="flex-1 px-4 py-3 bg-[#F9FAFA] border border-[#EAEAEC] rounded-[1.25rem] focus:ring-2 focus:ring-[#C8F169] focus:border-[#C8F169] transition-all outline-none shadow-[inset_0_2px_4px_rgba(0,0,0,0.02)] text-base" />
                 <button type="submit" className="bg-[#1A1A1A] hover:bg-black text-white px-6 py-3 rounded-[1.25rem] transition-all font-medium shadow-md shadow-black/10 active:scale-95 touch-manipulation flex-shrink-0">Guardar</button>
               </div>
+              {/* ✨ SUGERIDOR DE NOMBRE EN MODAL DE EDICIÓN */}
+              <NameSuggester
+                imagePreview={editImagePreview || detailProduct.imageUrl || null}
+                currentName={editName}
+                existingNames={products.filter(p => p.id !== detailProduct.id).map(p => p.name)}
+                onSelect={(name) => setEditName(name)}
+              />
               {editNameSuccess && <p className="mt-2 text-sm font-medium text-[#4A6310]">{editNameSuccess}</p>}
             </form>
 
@@ -1651,7 +2061,6 @@ function InventoryView({ products, userId, sales, restocks, onRefresh }: { produ
             <div className="mt-6 pt-6 border-t border-[#EAEAEC]/60">
               <label className="block text-sm font-medium text-[#71717A] mb-3">Fotografía del Producto</label>
               <div className="flex flex-col sm:flex-row gap-3 items-start">
-                {/* Thumbnail con lightbox */}
                 <div
                   className={`w-24 h-24 bg-[#F9FAFA] rounded-[1.25rem] border-2 overflow-hidden flex items-center justify-center flex-shrink-0 relative transition-all ${isDraggingEdit ? 'border-[#C8F169] bg-[#E8F8B6]/30 scale-105' : 'border-[#EAEAEC]'} ${(editImagePreview || detailProduct.imageUrl) ? 'cursor-zoom-in group' : ''}`}
                   onDragOver={e => { e.preventDefault(); setIsDraggingEdit(true); }}
@@ -1663,7 +2072,6 @@ function InventoryView({ products, userId, sales, restocks, onRefresh }: { produ
                   {(editImagePreview || detailProduct.imageUrl) && <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-all flex items-center justify-center"><ZoomIn size={20} className="text-white opacity-0 group-hover:opacity-100 transition-opacity" /></div>}
                 </div>
                 <div className="flex flex-col gap-2 flex-1">
-                  {/* Zona drag-drop */}
                   <label
                     className={`flex items-center justify-center sm:justify-start gap-2 border-2 border-dashed px-4 py-2.5 rounded-[1rem] text-sm font-medium transition-all cursor-pointer touch-manipulation w-full ${isDraggingEdit ? 'border-[#C8F169] bg-[#E8F8B6]/20 text-[#4A6310]' : 'border-[#EAEAEC] bg-[#F9FAFA] hover:bg-[#EAEAEC] text-[#111111]'}`}
                     onDragOver={e => { e.preventDefault(); setIsDraggingEdit(true); }}
@@ -1681,14 +2089,6 @@ function InventoryView({ products, userId, sales, restocks, onRefresh }: { produ
               </div>
             </div>
 
-            {/* Lightbox */}
-            {lightboxUrl && (
-              <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-sm animate-in fade-in" onClick={() => setLightboxUrl(null)}>
-                <button className="absolute top-4 right-4 p-2 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors touch-manipulation"><X size={22} /></button>
-                <img src={lightboxUrl} alt="Imagen ampliada" className="max-w-[92vw] max-h-[88vh] rounded-[1.5rem] shadow-2xl object-contain animate-in zoom-in-90" onClick={e => e.stopPropagation()} />
-              </div>
-            )}
-
             {/* Zona peligrosa - Eliminar producto */}
             <div className="mt-6 pt-6 border-t border-red-100">
               {!confirmDelete ? (
@@ -1705,6 +2105,14 @@ function InventoryView({ products, userId, sales, restocks, onRefresh }: { produ
             </div>
 
           </div>
+        </div>
+      )}
+
+      {/* --- Lightbox Global (Funciona en la vista de Lista y en el Detalle) --- */}
+      {lightboxUrl && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-sm animate-in fade-in" onClick={() => setLightboxUrl(null)}>
+          <button className="absolute top-4 right-4 p-2 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors touch-manipulation"><X size={22} /></button>
+          <img src={lightboxUrl} alt="Imagen ampliada" className="max-w-[92vw] max-h-[88vh] rounded-[1.5rem] shadow-2xl object-contain animate-in zoom-in-90" onClick={e => e.stopPropagation()} />
         </div>
       )}
     </div>
