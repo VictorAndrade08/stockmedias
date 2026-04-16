@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { ShoppingBag, User, ChevronLeft, ChevronRight, X, ArrowRight, ShoppingCart, Check, ZoomIn, Search } from 'lucide-react';
+import { ShoppingBag, User, ChevronLeft, ChevronRight, X, ArrowRight, ShoppingCart, Check, ZoomIn, Search, Package } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 
 // --- INICIALIZACIÓN DE SUPABASE ---
@@ -78,6 +78,24 @@ export default function TiendaPage() {
   const [addedItems, setAddedItems] = useState<{ [key: string]: boolean }>({});
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const [cartBump, setCartBump] = useState(false); 
+
+  // --- PERSISTENCIA DEL CARRITO (Reddit 2026 Best Practices) ---
+  // 1. Cargar carrito al iniciar la página
+  useEffect(() => {
+    const savedCart = localStorage.getItem('wolfe_socks_cart');
+    if (savedCart) {
+      try {
+        setCart(JSON.parse(savedCart));
+      } catch (err) {
+        console.error("Error al cargar el carrito persistente:", err);
+      }
+    }
+  }, []);
+
+  // 2. Guardar carrito cada vez que cambie
+  useEffect(() => {
+    localStorage.setItem('wolfe_socks_cart', JSON.stringify(cart));
+  }, [cart]);
 
   // --- CARGA Y MEZCLA DE DATOS ---
   useEffect(() => {
@@ -210,7 +228,6 @@ export default function TiendaPage() {
 
     const encodedMessage = encodeURIComponent(message);
     
-    // NÚMERO DE WHATSAPP CONFIGURADO
     const whatsappNumber = "593983445421"; 
     
     window.open(`https://wa.me/${whatsappNumber}?text=${encodedMessage}`, '_blank');
@@ -223,7 +240,6 @@ export default function TiendaPage() {
       <header className="sticky top-0 z-40 bg-[#F4F5F4]/90 backdrop-blur-md border-b border-[#EAEAEC]">
         <div className="max-w-[1400px] mx-auto px-4 md:px-6 py-4 md:py-5 flex items-center justify-between">
           
-          {/* Logo y Texto Ajustados */}
           <div className="flex items-center gap-1.5 md:gap-2.5 text-xl md:text-[1.35rem] font-bold tracking-tight text-[#1A1A1A] cursor-pointer" onClick={() => window.scrollTo(0,0)}>
             <img 
               src="https://pub-25cde2184a5249da96fa022aae951321.r2.dev/logo/logo.png" 
@@ -234,7 +250,7 @@ export default function TiendaPage() {
           </div>
           
           <nav className="hidden md:flex items-center gap-8 text-sm font-medium text-[#111111]">
-             {/* Enlaces reservados para el futuro */}
+             {/* Enlaces futuros */}
           </nav>
 
           <div className="flex items-center gap-4 md:gap-5">
@@ -265,7 +281,6 @@ export default function TiendaPage() {
           Nuestras medias más amadas, en las que confías para la comodidad<br className="hidden md:block"/> y el estilo de todos los días.
         </p>
         
-        {/* Barra de búsqueda instantánea */}
         <div className="relative w-full max-w-md group">
           <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
             <Search size={20} className="text-[#A1A1AA] group-focus-within:text-[#1A1A1A] transition-colors" />
@@ -288,7 +303,7 @@ export default function TiendaPage() {
         </div>
       </section>
 
-      {/* --- PRODUCT GRID (MÓVIL = 2 COLUMNAS) --- */}
+      {/* --- PRODUCT GRID --- */}
       <main className="max-w-[1400px] mx-auto px-4 md:px-6 pb-24">
         {loading ? (
           <div className="flex flex-col items-center justify-center py-20 text-[#71717A]">
@@ -308,12 +323,10 @@ export default function TiendaPage() {
           </div>
         ) : (
           <>
-            {/* GRID RESPONSIVE */}
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-x-3 sm:gap-x-6 gap-y-8 sm:gap-y-12">
               {displayedProducts.map((product) => (
                 <div key={product.id} className="group flex flex-col h-full">
                   
-                  {/* Contenedor de Imagen con Botones Permanentes */}
                   <div 
                     className="relative w-full aspect-square bg-gradient-to-b from-[#EAEAEC] to-[#F4F5F4] rounded-2xl sm:rounded-[1.5rem] mb-3 md:mb-4 flex items-center justify-center overflow-hidden border border-[#EAEAEC]/50 shadow-sm transition-all duration-500 group-hover:shadow-md cursor-zoom-in"
                     onClick={() => setLightboxUrl(product.image_url || 'fallback')}
@@ -328,12 +341,10 @@ export default function TiendaPage() {
                       <SockIcon size={48} className="text-[#A1A1AA]/50 group-hover:scale-110 transition-transform duration-700" />
                     )}
                     
-                    {/* Lupa discreta en la esquina superior */}
                     <div className="absolute top-2 right-2 md:top-3 md:right-3 bg-white/90 backdrop-blur-sm p-1.5 rounded-full text-[#111111] opacity-0 group-hover:opacity-100 transition-opacity hidden md:block shadow-sm z-20">
                       <ZoomIn size={16} />
                     </div>
 
-                    {/* Botones de Acción (Siempre visibles dentro de la foto) */}
                     <div 
                       className="absolute inset-x-0 bottom-0 p-2 sm:p-3 flex gap-1.5 sm:gap-2 z-20"
                       onClick={(e) => e.stopPropagation()} 
@@ -353,9 +364,7 @@ export default function TiendaPage() {
                     </div>
                   </div>
 
-                  {/* Info del Producto */}
                   <div className="flex flex-col flex-1">
-                    {/* SKU Refinado */}
                     {product.sku && (
                       <span className="font-bold text-[10px] sm:text-xs tracking-widest text-[#4A6310] bg-[#E8F8B6] px-2 py-1 rounded-md inline-block w-fit mb-1.5 border border-[#C8F169]/40">
                         #{product.sku}
@@ -402,19 +411,16 @@ export default function TiendaPage() {
         )}
       </main>
 
-      {/* --- CARRITO SLIDE-OVER (SIDEBAR) --- */}
+      {/* --- CARRITO SLIDE-OVER --- */}
       {isCartOpen && (
         <div className="fixed inset-0 z-50 flex justify-end">
-          {/* Backdrop */}
           <div 
             className="absolute inset-0 bg-black/40 backdrop-blur-sm transition-opacity"
             onClick={() => setIsCartOpen(false)}
           />
           
-          {/* Drawer */}
           <div className="relative w-full md:w-[400px] h-full bg-white shadow-2xl flex flex-col animate-in slide-in-from-right duration-300">
             
-            {/* Header del Carrito */}
             <div className="px-6 py-5 border-b border-[#EAEAEC] flex items-center justify-between bg-white">
               <h2 className="text-xl font-bold tracking-tight flex items-center gap-2">
                 <ShoppingCart size={20} /> Tu Pedido
@@ -427,7 +433,6 @@ export default function TiendaPage() {
               </button>
             </div>
 
-            {/* Items del Carrito */}
             <div className="flex-1 overflow-y-auto p-6 space-y-6">
               {cart.length === 0 ? (
                 <div className="h-full flex flex-col items-center justify-center text-[#71717A] space-y-4">
@@ -443,7 +448,6 @@ export default function TiendaPage() {
               ) : (
                 cart.map(item => (
                   <div key={item.product.id} className="flex gap-4">
-                    {/* Imagen miniatura */}
                     <div className="w-20 h-20 bg-[#F4F5F4] rounded-xl flex-shrink-0 overflow-hidden border border-[#EAEAEC] flex items-center justify-center">
                       {item.product.image_url ? (
                         <img src={item.product.image_url} alt={item.product.name} className="w-full h-full object-cover mix-blend-multiply" />
@@ -452,10 +456,8 @@ export default function TiendaPage() {
                       )}
                     </div>
                     
-                    {/* Info */}
                     <div className="flex flex-col justify-between flex-1">
                       <div>
-                        {/* SKU grande también en el carrito */}
                         {item.product.sku && (
                           <span className="font-black text-base tracking-wider text-[#4A6310] block mb-0.5">
                             #{item.product.sku}
@@ -469,7 +471,6 @@ export default function TiendaPage() {
                         </p>
                       </div>
                       
-                      {/* Controles de Cantidad */}
                       <div className="flex items-center justify-between mt-2">
                         <div className="flex items-center bg-[#F4F5F4] rounded-lg p-1">
                           <button onClick={() => updateQuantity(item.product.id, -1)} className="w-8 h-8 flex items-center justify-center text-[#71717A] hover:text-[#111111] font-bold touch-manipulation">−</button>
@@ -486,11 +487,8 @@ export default function TiendaPage() {
               )}
             </div>
 
-            {/* Footer / Checkout */}
             {cart.length > 0 && (
               <div className="border-t border-[#EAEAEC] p-6 bg-white space-y-4">
-                
-                {/* Banner de Promoción Dinámico */}
                 {savings > 0 && (
                   <div className="flex justify-between items-center text-xs font-bold text-[#4A6310] bg-[#E8F8B6]/50 px-3 py-2.5 rounded-xl border border-[#C8F169]/40">
                     <span className="flex items-center gap-1">🔥 Promo aplicada ({cartItemCount} pares)</span>
@@ -498,7 +496,6 @@ export default function TiendaPage() {
                   </div>
                 )}
 
-                {/* Resumen Total */}
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-sm font-bold text-[#71717A] uppercase tracking-wider">Total Pedido</span>
                   <div className="flex items-center gap-2">
@@ -509,7 +506,6 @@ export default function TiendaPage() {
                   </div>
                 </div>
 
-                {/* Formulario Cliente */}
                 <div>
                   <label className="block text-xs font-bold text-[#71717A] uppercase tracking-wider mb-2">Tu Nombre</label>
                   <input 
@@ -522,7 +518,6 @@ export default function TiendaPage() {
                   />
                 </div>
 
-                {/* Botón WhatsApp */}
                 <button 
                   onClick={handleWhatsAppCheckout}
                   disabled={cart.length === 0}
@@ -539,7 +534,7 @@ export default function TiendaPage() {
         </div>
       )}
 
-      {/* --- LIGHTBOX (IMAGEN EN GRANDE) --- */}
+      {/* --- LIGHTBOX --- */}
       {lightboxUrl && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/90 backdrop-blur-sm animate-in fade-in" onClick={() => setLightboxUrl(null)}>
           <button className="absolute top-4 right-4 p-3 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors touch-manipulation z-50">
