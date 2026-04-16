@@ -249,20 +249,20 @@ export default function TiendaPage() {
   };
 
   return (
-    <div className="min-h-screen bg-[#F4F5F4] text-[#111111] font-sans selection:bg-[#C8F169] selection:text-[#111111] relative">
+    <div className="min-h-screen bg-[#F4F5F4] text-[#111111] font-sans selection:bg-[#C8F169] selection:text-[#111111] relative pb-16 md:pb-0">
       
       {/* --- NAVEGACIÓN PRINCIPAL --- */}
       <header className="sticky top-0 z-40 bg-[#F4F5F4]/90 backdrop-blur-md border-b border-[#EAEAEC]">
         <div className="max-w-[1400px] mx-auto px-4 md:px-6 py-4 md:py-5 flex items-center justify-between">
           
           <div 
-            className="flex items-center gap-1.5 sm:gap-2 text-xl md:text-[1.35rem] font-bold tracking-tight text-[#1A1A1A] cursor-pointer" 
+            className="flex items-center gap-0 text-xl md:text-[1.35rem] font-bold tracking-tight text-[#1A1A1A] cursor-pointer" 
             onClick={() => router.push('/')}
           >
             <img 
               src={STORE_LOGO_URL} 
               alt="Wolfe Socks Logo" 
-              className="h-10 sm:h-12 md:h-14 w-auto object-contain transition-transform hover:scale-105" 
+              className="h-10 sm:h-12 md:h-14 w-auto object-contain transition-transform hover:scale-105 -mr-1 sm:-mr-1.5" 
             />
             Wolfe Socks
           </div>
@@ -418,6 +418,20 @@ export default function TiendaPage() {
           </>
         )}
       </main>
+
+      {/* --- FLOATING CHECKOUT BUTTON (MOBILE & DESKTOP / UX 2026) --- */}
+      {!isCartOpen && cartItemCount > 0 && (
+        <div className="fixed bottom-6 md:bottom-8 inset-x-0 z-40 flex justify-center px-4 pointer-events-none animate-in slide-in-from-bottom-8 fade-in duration-300">
+          <button 
+            onClick={() => setIsCartOpen(true)}
+            className="pointer-events-auto flex items-center gap-2.5 bg-[#1A1A1A] hover:bg-black text-white px-6 md:px-8 py-3.5 md:py-4 rounded-full font-bold shadow-[0_8px_24px_rgba(0,0,0,0.2)] md:hover:shadow-[0_12px_30px_rgba(0,0,0,0.3)] active:scale-95 md:hover:scale-105 transition-all touch-manipulation border border-black/10"
+          >
+            <ShoppingCart size={18} className="text-[#C8F169]" />
+            <span>Completar compra</span>
+            <span className="bg-[#F4F5F4] text-[#111111] px-2 py-0.5 rounded-full text-xs ml-1 shadow-sm">${cartTotal.toFixed(2)}</span>
+          </button>
+        </div>
+      )}
 
       {/* --- CARRITO SLIDE-OVER --- */}
       {isCartOpen && (
