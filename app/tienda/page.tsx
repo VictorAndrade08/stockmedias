@@ -3,11 +3,20 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { ShoppingBag, User, X, ArrowRight, ShoppingCart, Check, ZoomIn, Search } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
+import { useRouter } from 'next/navigation'; // <-- Importado para redirección rápida
 
-// --- INICIALIZACIÓN DE SUPABASE ---
+// --- INICIALIZACIÓN DE SUPABASE (ANTI-CACHÉ REDDIT 2026) ---
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL as string;
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY as string; 
-const supabase = (supabaseUrl && supabaseKey) ? createClient(supabaseUrl, supabaseKey) : null;
+
+// Forzamos 'no-store' para que Next.js y el navegador NUNCA guarden datos viejos en caché
+const supabase = (supabaseUrl && supabaseKey) 
+  ? createClient(supabaseUrl, supabaseKey, {
+      global: {
+        fetch: (url, options) => fetch(url, { ...options, cache: 'no-store' })
+      }
+    }) 
+  : null;
 
 // --- CONSTANTES ---
 const ITEMS_PER_PAGE = 12;
@@ -28,26 +37,6 @@ interface CartItem {
   quantity: number;
 }
 
-// --- SVG PERSONALIZADO: MEDIA/CALCETÍN ---
-const SockIcon = ({ className = "", size = 24 }: { className?: string, size?: number }) => (
-  <svg 
-    width={size} 
-    height={size} 
-    viewBox="0 0 24 24" 
-    fill="none" 
-    stroke="currentColor" 
-    strokeWidth="2" 
-    strokeLinecap="round" 
-    strokeLinejoin="round" 
-    className={className}
-  >
-    <path d="M12 3v12.5a3.5 3.5 0 0 1-7 0v-2.5" />
-    <path d="M12 3h4c1.1 0 2 .9 2 2v6" />
-    <path d="M18 11v1.5a3.5 3.5 0 0 1-7 0" />
-    <path d="M5 8h14" />
-  </svg>
-);
-
 // --- FUNCIÓN MEZCLADORA (SHUFFLE) ---
 const shuffleArray = (array: any[]) => {
   const shuffled = [...array];
@@ -64,6 +53,8 @@ const normalizeText = (text: string) => {
 };
 
 export default function TiendaPage() {
+  const router = useRouter(); // <-- Instancia del enrutador de Next.js
+  
   const [allProducts, setAllProducts] = useState<StoreProduct[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -98,15 +89,17 @@ export default function TiendaPage() {
     localStorage.setItem('wolfe_socks_cart', JSON.stringify(cart));
   }, [cart]);
 
-  // --- CARGA, PRIORIZACIÓN Y MEZCLA DE DATOS ---
+  // --- CARGA, PRIORIZACIÓN Y MEZCLA DE DATOS (CON ANTI-CACHÉ) ---
   useEffect(() => {
     const fetchProducts = async () => {
       if (!supabase) return;
       setLoading(true);
 
+      // El .neq fuerza una query dinámica para evadir el caché estático de Next.js
       const { data, error } = await supabase
         .from('products')
-        .select('id, sku, name, price, stock, image_url');
+        .select('id, sku, name, price, stock, image_url')
+        .neq('id', '00000000-0000-0000-0000-000000000000');
 
       if (error) {
         console.error('Error fetching store products:', error);
@@ -261,7 +254,11 @@ export default function TiendaPage() {
       <header className="sticky top-0 z-40 bg-[#F4F5F4]/90 backdrop-blur-md border-b border-[#EAEAEC]">
         <div className="max-w-[1400px] mx-auto px-4 md:px-6 py-4 md:py-5 flex items-center justify-between">
           
-          <div className="flex items-center gap-1.5 sm:gap-2 text-xl md:text-[1.35rem] font-bold tracking-tight text-[#1A1A1A] cursor-pointer" onClick={() => window.scrollTo(0,0)}>
+          {/* COMPONENTE LOGO: Ahora direcciona al Home (/) sin recargar usando router.push */}
+          <div 
+            className="flex items-center gap-1.5 sm:gap-2 text-xl md:text-[1.35rem] font-bold tracking-tight text-[#1A1A1A] cursor-pointer" 
+            onClick={() => router.push('/')}
+          >
             <img 
               src={STORE_LOGO_URL} 
               alt="Wolfe Socks Logo" 
@@ -293,7 +290,7 @@ export default function TiendaPage() {
         </div>
       </header>
 
-      {/* --- HERO SECTION CON COPYWRITING ACTUALIZADO --- */}
+      {/* --- HERO SECTION --- */}
       <section className="py-10 md:py-20 px-4 md:px-6 text-center max-w-3xl mx-auto flex flex-col items-center">
         <h1 className="text-3xl md:text-[3.5rem] font-black uppercase tracking-tighter mb-3 md:mb-4 text-[#111111]">
           ENCUENTRA TU PAR IDEAL

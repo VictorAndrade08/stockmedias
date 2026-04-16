@@ -1,13 +1,25 @@
 "use client";
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { ShoppingBag, User, ChevronLeft, ChevronRight, X, ArrowRight, ShoppingCart, Check, ZoomIn, Search, Package } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { ShoppingBag, User, X, ArrowRight, ShoppingCart, Check, ZoomIn, Search } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 
-// --- INICIALIZACIÓN DE SUPABASE ---
+// --- INICIALIZACIÓN DE SUPABASE (ANTI-CACHÉ REDDIT 2026) ---
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL as string;
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY as string; 
-const supabase = (supabaseUrl && supabaseKey) ? createClient(supabaseUrl, supabaseKey) : null;
+
+// Forzamos 'no-store' para que Next.js y el navegador NUNCA guarden datos viejos en caché
+const supabase = (supabaseUrl && supabaseKey) 
+  ? createClient(supabaseUrl, supabaseKey, {
+      global: {
+        fetch: (url, options) => fetch(url, { ...options, cache: 'no-store' })
+      }
+    }) 
+  : null;
+
+// --- CONSTANTES ---
+const ITEMS_PER_PAGE = 12;
+const STORE_LOGO_URL = "https://pub-25cde2184a5249da96fa022aae951321.r2.dev/logo/logo.png";
 
 // --- TIPOS ---
 interface StoreProduct {
@@ -23,28 +35,6 @@ interface CartItem {
   product: StoreProduct;
   quantity: number;
 }
-
-const ITEMS_PER_PAGE = 8;
-
-// --- SVG PERSONALIZADO: MEDIA/CALCETÍN ---
-const SockIcon = ({ className = "", size = 24 }: { className?: string, size?: number }) => (
-  <svg 
-    width={size} 
-    height={size} 
-    viewBox="0 0 24 24" 
-    fill="none" 
-    stroke="currentColor" 
-    strokeWidth="2" 
-    strokeLinecap="round" 
-    strokeLinejoin="round" 
-    className={className}
-  >
-    <path d="M12 3v12.5a3.5 3.5 0 0 1-7 0v-2.5" />
-    <path d="M12 3h4c1.1 0 2 .9 2 2v6" />
-    <path d="M18 11v1.5a3.5 3.5 0 0 1-7 0" />
-    <path d="M5 8h14" />
-  </svg>
-);
 
 // --- FUNCIÓN MEZCLADORA (SHUFFLE) ---
 const shuffleArray = (array: any[]) => {
@@ -66,8 +56,9 @@ export default function TiendaPage() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   
-  // Paginación Cliente
-  const [currentPage, setCurrentPage] = useState(1);
+  // Scroll Infinito
+  const [visibleCount, setVisibleCount] = useState(ITEMS_PER_PAGE);
+  const loaderRef = useRef<HTMLDivElement>(null);
   
   // Carrito y Checkout
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -79,8 +70,7 @@ export default function TiendaPage() {
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const [cartBump, setCartBump] = useState(false); 
 
-  // --- PERSISTENCIA DEL CARRITO (Reddit 2026 Best Practices) ---
-  // 1. Cargar carrito al iniciar la página
+  // --- PERSISTENCIA DEL CARRITO ---
   useEffect(() => {
     const savedCart = localStorage.getItem('wolfe_socks_cart');
     if (savedCart) {
@@ -92,25 +82,33 @@ export default function TiendaPage() {
     }
   }, []);
 
-  // 2. Guardar carrito cada vez que cambie
   useEffect(() => {
     localStorage.setItem('wolfe_socks_cart', JSON.stringify(cart));
   }, [cart]);
 
-  // --- CARGA Y MEZCLA DE DATOS ---
+  // --- CARGA, PRIORIZACIÓN Y MEZCLA DE DATOS (CON ANTI-CACHÉ) ---
   useEffect(() => {
     const fetchProducts = async () => {
       if (!supabase) return;
       setLoading(true);
 
+      // El .neq fuerza una query dinámica para evadir el caché estático de Next.js
       const { data, error } = await supabase
         .from('products')
-        .select('id, sku, name, price, stock, image_url');
+        .select('id, sku, name, price, stock, image_url')
+        .neq('id', '00000000-0000-0000-0000-000000000000');
 
       if (error) {
         console.error('Error fetching store products:', error);
       } else if (data) {
-        setAllProducts(shuffleArray(data));
+        // Prioridad visual: Fotos primero, luego sin fotos (mezclados internamente)
+        const withPhoto = data.filter(p => p.image_url && p.image_url.trim() !== "");
+        const withoutPhoto = data.filter(p => !p.image_url || p.image_url.trim() === "");
+
+        setAllProducts([
+          ...shuffleArray(withPhoto), 
+          ...shuffleArray(withoutPhoto)
+        ]);
       }
       setLoading(false);
     };
@@ -131,16 +129,31 @@ export default function TiendaPage() {
   }, [allProducts, searchTerm]);
 
   useEffect(() => {
-    setCurrentPage(1);
+    setVisibleCount(ITEMS_PER_PAGE);
   }, [searchTerm]);
 
-  const totalProducts = filteredProducts.length;
-  const totalPages = Math.ceil(totalProducts / ITEMS_PER_PAGE);
-  
-  const displayedProducts = filteredProducts.slice(
-    (currentPage - 1) * ITEMS_PER_PAGE, 
-    currentPage * ITEMS_PER_PAGE
-  );
+  const displayedProducts = filteredProducts.slice(0, visibleCount);
+
+  // --- SENSOR DE INTERSECCIÓN (SCROLL INFINITO) ---
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && visibleCount < filteredProducts.length) {
+          setVisibleCount((prev) => prev + ITEMS_PER_PAGE);
+        }
+      },
+      { threshold: 0.1 }
+    );
+
+    const currentLoader = loaderRef.current;
+    if (currentLoader) {
+      observer.observe(currentLoader);
+    }
+
+    return () => {
+      if (currentLoader) observer.unobserve(currentLoader);
+    };
+  }, [visibleCount, filteredProducts.length]);
 
   // --- LÓGICA DEL CARRITO ---
   const handleAddToCart = useCallback((product: StoreProduct, openCart: boolean = false) => {
@@ -186,7 +199,7 @@ export default function TiendaPage() {
     setCart(prev => prev.filter(item => item.product.id !== productId));
   };
 
-  // --- MOTOR DE DESCUENTOS (Precios de Locura Mix & Match) ---
+  // --- MOTOR DE DESCUENTOS ---
   const originalTotal = useMemo(() => {
     return cart.reduce((sum, item) => sum + (item.product.price * item.quantity), 0);
   }, [cart]);
@@ -205,7 +218,7 @@ export default function TiendaPage() {
 
   const savings = originalTotal - cartTotal;
 
-  // --- WHATSAPP CHECKOUT (TEXTO PERSONALIZADO) ---
+  // --- WHATSAPP CHECKOUT ---
   const handleWhatsAppCheckout = () => {
     if (!clientName.trim()) {
       alert("Por favor ingresa tu nombre para continuar.");
@@ -227,7 +240,6 @@ export default function TiendaPage() {
     message += `\n💰 *Total a pagar: $${cartTotal.toFixed(2)}*\n\nPor favor cotiza o envía eso quiero.`;
 
     const encodedMessage = encodeURIComponent(message);
-    
     const whatsappNumber = "593983445421"; 
     
     window.open(`https://wa.me/${whatsappNumber}?text=${encodedMessage}`, '_blank');
@@ -240,11 +252,14 @@ export default function TiendaPage() {
       <header className="sticky top-0 z-40 bg-[#F4F5F4]/90 backdrop-blur-md border-b border-[#EAEAEC]">
         <div className="max-w-[1400px] mx-auto px-4 md:px-6 py-4 md:py-5 flex items-center justify-between">
           
-          <div className="flex items-center gap-1.5 md:gap-2.5 text-xl md:text-[1.35rem] font-bold tracking-tight text-[#1A1A1A] cursor-pointer" onClick={() => window.scrollTo(0,0)}>
+          <div 
+            className="flex items-center gap-1.5 sm:gap-2 text-xl md:text-[1.35rem] font-bold tracking-tight text-[#1A1A1A] cursor-pointer" 
+            onClick={() => { window.scrollTo(0,0); window.location.reload(); }}
+          >
             <img 
-              src="https://pub-25cde2184a5249da96fa022aae951321.r2.dev/logo/logo.png" 
+              src={STORE_LOGO_URL} 
               alt="Wolfe Socks Logo" 
-              className="h-8 sm:h-10 md:h-11 w-auto object-contain transition-transform hover:scale-105" 
+              className="h-10 sm:h-12 md:h-14 w-auto object-contain transition-transform hover:scale-105" 
             />
             Wolfe Socks
           </div>
@@ -272,13 +287,13 @@ export default function TiendaPage() {
         </div>
       </header>
 
-      {/* --- HERO SECTION CON BÚSQUEDA INTELIGENTE --- */}
+      {/* --- HERO SECTION CON BÚSQUEDA --- */}
       <section className="py-10 md:py-20 px-4 md:px-6 text-center max-w-3xl mx-auto flex flex-col items-center">
         <h1 className="text-3xl md:text-[3.5rem] font-black uppercase tracking-tighter mb-3 md:mb-4 text-[#111111]">
-          BEST SELLERS
+          ENCUENTRA TU PAR IDEAL
         </h1>
-        <p className="text-sm md:text-base text-[#71717A] font-medium mb-6 md:mb-8">
-          Nuestras medias más amadas, en las que confías para la comodidad<br className="hidden md:block"/> y el estilo de todos los días.
+        <p className="text-sm md:text-base text-[#71717A] font-medium mb-6 md:mb-8 leading-relaxed">
+          Dale personalidad a tus pasos con diseños únicos y comodidad absoluta.<br className="hidden md:block"/> Combina tus favoritos y ahorra con nuestros Precios de Locura.
         </p>
         
         <div className="relative w-full max-w-md group">
@@ -307,7 +322,7 @@ export default function TiendaPage() {
       <main className="max-w-[1400px] mx-auto px-4 md:px-6 pb-24">
         {loading ? (
           <div className="flex flex-col items-center justify-center py-20 text-[#71717A]">
-            <SockIcon size={40} className="animate-bounce mb-4 text-[#A1A1AA]" />
+            <img src={STORE_LOGO_URL} alt="Cargando" className="w-16 h-16 md:w-20 md:h-20 object-contain animate-bounce mb-4 opacity-40 grayscale" />
             <p className="font-medium">Cargando catálogo...</p>
           </div>
         ) : displayedProducts.length === 0 ? (
@@ -323,7 +338,7 @@ export default function TiendaPage() {
           </div>
         ) : (
           <>
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-x-3 sm:gap-x-6 gap-y-8 sm:gap-y-12">
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-x-3 sm:gap-x-6 gap-y-10 sm:gap-y-12">
               {displayedProducts.map((product) => (
                 <div key={product.id} className="group flex flex-col h-full">
                   
@@ -335,10 +350,16 @@ export default function TiendaPage() {
                       <img 
                         src={product.image_url} 
                         alt={product.name} 
+                        loading="lazy"
                         className="absolute inset-0 w-full h-full object-cover mix-blend-multiply group-hover:scale-105 transition-transform duration-700 ease-out" 
                       />
                     ) : (
-                      <SockIcon size={48} className="text-[#A1A1AA]/50 group-hover:scale-110 transition-transform duration-700" />
+                      <img 
+                        src={STORE_LOGO_URL} 
+                        alt="Sin imagen" 
+                        loading="lazy"
+                        className="w-20 h-20 md:w-28 md:h-28 object-contain opacity-30 grayscale group-hover:scale-110 transition-transform duration-700" 
+                      />
                     )}
                     
                     <div className="absolute top-2 right-2 md:top-3 md:right-3 bg-white/90 backdrop-blur-sm p-1.5 rounded-full text-[#111111] opacity-0 group-hover:opacity-100 transition-opacity hidden md:block shadow-sm z-20">
@@ -364,9 +385,9 @@ export default function TiendaPage() {
                     </div>
                   </div>
 
-                  <div className="flex flex-col flex-1">
+                  <div className="flex flex-col flex-1 px-1">
                     {product.sku && (
-                      <span className="font-bold text-[10px] sm:text-xs tracking-widest text-[#4A6310] bg-[#E8F8B6] px-2 py-1 rounded-md inline-block w-fit mb-1.5 border border-[#C8F169]/40">
+                      <span className="font-bold text-[10px] sm:text-xs tracking-widest text-[#4A6310] bg-[#E8F8B6] px-2.5 py-0.5 rounded-full inline-block w-fit mb-1.5 border border-[#C8F169]/40">
                         #{product.sku}
                       </span>
                     )}
@@ -375,7 +396,7 @@ export default function TiendaPage() {
                       <h3 className="font-bold text-[#111111] text-sm sm:text-base leading-tight flex-1 line-clamp-2">
                         {product.name}
                       </h3>
-                      <span className="font-black text-[#111111] text-sm sm:text-base bg-[#F4F5F4] px-2 py-1 rounded-lg self-start sm:self-auto shrink-0 mt-1 sm:mt-0">
+                      <span className="font-black text-[#111111] text-sm sm:text-base shrink-0 mt-0.5 sm:mt-0">
                         ${product.price.toFixed(2)}
                       </span>
                     </div>
@@ -385,26 +406,10 @@ export default function TiendaPage() {
               ))}
             </div>
 
-            {/* --- PAGINACIÓN --- */}
-            {totalPages > 1 && (
-              <div className="mt-16 md:mt-20 flex items-center justify-center gap-3 md:gap-4">
-                <button 
-                  onClick={() => { setCurrentPage(p => Math.max(1, p - 1)); window.scrollTo({top: 0, behavior: 'smooth'}); }}
-                  disabled={currentPage === 1}
-                  className="w-10 h-10 md:w-12 md:h-12 flex items-center justify-center rounded-full bg-white border border-[#EAEAEC] text-[#111111] hover:border-[#1A1A1A] disabled:opacity-50 disabled:cursor-not-allowed transition-colors touch-manipulation shadow-sm"
-                >
-                  <ChevronLeft size={20} />
-                </button>
-                <span className="text-xs md:text-sm font-bold text-[#111111]">
-                  Página {currentPage} de {totalPages}
-                </span>
-                <button 
-                  onClick={() => { setCurrentPage(p => Math.min(totalPages, p + 1)); window.scrollTo({top: 0, behavior: 'smooth'}); }}
-                  disabled={currentPage === totalPages}
-                  className="w-10 h-10 md:w-12 md:h-12 flex items-center justify-center rounded-full bg-white border border-[#EAEAEC] text-[#111111] hover:border-[#1A1A1A] disabled:opacity-50 disabled:cursor-not-allowed transition-colors touch-manipulation shadow-sm"
-                >
-                  <ChevronRight size={20} />
-                </button>
+            {/* --- SENSOR DE SCROLL INFINITO --- */}
+            {visibleCount < filteredProducts.length && (
+              <div ref={loaderRef} className="mt-12 flex items-center justify-center py-10 w-full">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-l-2 border-[#1A1A1A]"></div>
               </div>
             )}
           </>
@@ -414,79 +419,44 @@ export default function TiendaPage() {
       {/* --- CARRITO SLIDE-OVER --- */}
       {isCartOpen && (
         <div className="fixed inset-0 z-50 flex justify-end">
-          <div 
-            className="absolute inset-0 bg-black/40 backdrop-blur-sm transition-opacity"
-            onClick={() => setIsCartOpen(false)}
-          />
-          
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm transition-opacity" onClick={() => setIsCartOpen(false)} />
           <div className="relative w-full md:w-[400px] h-full bg-white shadow-2xl flex flex-col animate-in slide-in-from-right duration-300">
-            
             <div className="px-6 py-5 border-b border-[#EAEAEC] flex items-center justify-between bg-white">
-              <h2 className="text-xl font-bold tracking-tight flex items-center gap-2">
-                <ShoppingCart size={20} /> Tu Pedido
-              </h2>
-              <button 
-                onClick={() => setIsCartOpen(false)}
-                className="p-2 bg-[#F4F5F4] hover:bg-[#EAEAEC] rounded-full transition-colors text-[#71717A] hover:text-[#111111] touch-manipulation"
-              >
-                <X size={18} />
-              </button>
+              <h2 className="text-xl font-bold tracking-tight flex items-center gap-2"><ShoppingCart size={20} /> Tu Pedido</h2>
+              <button onClick={() => setIsCartOpen(false)} className="p-2 bg-[#F4F5F4] hover:bg-[#EAEAEC] rounded-full transition-colors text-[#71717A] hover:text-[#111111] touch-manipulation"><X size={18} /></button>
             </div>
-
             <div className="flex-1 overflow-y-auto p-6 space-y-6">
               {cart.length === 0 ? (
                 <div className="h-full flex flex-col items-center justify-center text-[#71717A] space-y-4">
-                  <SockIcon size={48} className="text-[#EAEAEC]" />
+                  <img src={STORE_LOGO_URL} alt="Carrito vacío" className="w-20 h-20 object-contain opacity-20 grayscale" />
                   <p className="font-medium text-[#111111]">Tu carrito está vacío.</p>
-                  <button 
-                    onClick={() => setIsCartOpen(false)}
-                    className="text-sm font-bold text-[#71717A] hover:text-[#1A1A1A] underline decoration-2 underline-offset-4 transition-colors touch-manipulation"
-                  >
-                    Seguir comprando
-                  </button>
+                  <button onClick={() => setIsCartOpen(false)} className="text-sm font-bold text-[#71717A] hover:text-[#1A1A1A] underline decoration-2 underline-offset-4 transition-colors touch-manipulation">Seguir comprando</button>
                 </div>
               ) : (
                 cart.map(item => (
                   <div key={item.product.id} className="flex gap-4">
-                    <div className="w-20 h-20 bg-[#F4F5F4] rounded-xl flex-shrink-0 overflow-hidden border border-[#EAEAEC] flex items-center justify-center">
-                      {item.product.image_url ? (
-                        <img src={item.product.image_url} alt={item.product.name} className="w-full h-full object-cover mix-blend-multiply" />
-                      ) : (
-                        <SockIcon size={24} className="text-[#A1A1AA]" />
-                      )}
+                    <div className="w-20 h-20 bg-[#F4F5F4] rounded-xl flex-shrink-0 overflow-hidden border border-[#EAEAEC] flex items-center justify-center relative">
+                      {item.product.image_url ? <img src={item.product.image_url} alt={item.product.name} className="w-full h-full object-cover mix-blend-multiply" /> : <img src={STORE_LOGO_URL} alt="Sin imagen" className="w-10 h-10 object-contain opacity-30 grayscale" />}
                     </div>
-                    
                     <div className="flex flex-col justify-between flex-1">
                       <div>
-                        {item.product.sku && (
-                          <span className="font-black text-base tracking-wider text-[#4A6310] block mb-0.5">
-                            #{item.product.sku}
-                          </span>
-                        )}
-                        <h4 className="font-bold text-[#111111] text-sm line-clamp-2 leading-tight">
-                          {item.product.name}
-                        </h4>
-                        <p className="text-xs font-medium text-[#71717A] mt-1">
-                          ${item.product.price.toFixed(2)} base c/u
-                        </p>
+                        {item.product.sku && <span className="font-black text-base tracking-wider text-[#4A6310] block mb-0.5">#{item.product.sku}</span>}
+                        <h4 className="font-bold text-[#111111] text-sm line-clamp-2 leading-tight">{item.product.name}</h4>
+                        <p className="text-xs font-medium text-[#71717A] mt-1">${item.product.price.toFixed(2)} base c/u</p>
                       </div>
-                      
                       <div className="flex items-center justify-between mt-2">
                         <div className="flex items-center bg-[#F4F5F4] rounded-lg p-1">
                           <button onClick={() => updateQuantity(item.product.id, -1)} className="w-8 h-8 flex items-center justify-center text-[#71717A] hover:text-[#111111] font-bold touch-manipulation">−</button>
                           <span className="w-6 text-center text-sm font-bold text-[#111111]">{item.quantity}</span>
                           <button onClick={() => updateQuantity(item.product.id, 1)} className="w-8 h-8 flex items-center justify-center text-[#71717A] hover:text-[#111111] font-bold touch-manipulation">+</button>
                         </div>
-                        <button onClick={() => removeFromCart(item.product.id)} className="text-xs font-bold text-red-500 hover:text-red-700 underline decoration-red-200 underline-offset-2 p-2 touch-manipulation">
-                          Quitar
-                        </button>
+                        <button onClick={() => removeFromCart(item.product.id)} className="text-xs font-bold text-red-500 hover:text-red-700 underline decoration-red-200 underline-offset-2 p-2 touch-manipulation">Quitar</button>
                       </div>
                     </div>
                   </div>
                 ))
               )}
             </div>
-
             {cart.length > 0 && (
               <div className="border-t border-[#EAEAEC] p-6 bg-white space-y-4">
                 {savings > 0 && (
@@ -495,39 +465,18 @@ export default function TiendaPage() {
                     <span className="bg-white px-2 py-1 rounded-md shadow-sm text-[#111111]">- ${savings.toFixed(2)} ahorro</span>
                   </div>
                 )}
-
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-sm font-bold text-[#71717A] uppercase tracking-wider">Total Pedido</span>
                   <div className="flex items-center gap-2">
-                    {savings > 0 && (
-                      <span className="text-base font-bold text-[#A1A1AA] line-through">${originalTotal.toFixed(2)}</span>
-                    )}
+                    {savings > 0 && <span className="text-base font-bold text-[#A1A1AA] line-through">${originalTotal.toFixed(2)}</span>}
                     <span className="text-2xl font-black text-[#111111] tracking-tight">${cartTotal.toFixed(2)}</span>
                   </div>
                 </div>
-
                 <div>
                   <label className="block text-xs font-bold text-[#71717A] uppercase tracking-wider mb-2">Tu Nombre</label>
-                  <input 
-                    type="text" 
-                    required
-                    value={clientName} 
-                    onChange={e => setClientName(e.target.value)} 
-                    placeholder="Ej. Juan Pérez" 
-                    className="w-full px-4 py-3 bg-[#F4F5F4] border border-[#EAEAEC] rounded-xl focus:ring-2 focus:ring-[#1A1A1A] focus:border-[#1A1A1A] transition-all outline-none font-medium text-sm"
-                  />
+                  <input type="text" required value={clientName} onChange={e => setClientName(e.target.value)} placeholder="Ej. Juan Pérez" className="w-full px-4 py-3 bg-[#F4F5F4] border border-[#EAEAEC] rounded-xl focus:ring-2 focus:ring-[#1A1A1A] focus:border-[#1A1A1A] transition-all outline-none font-medium text-sm" />
                 </div>
-
-                <button 
-                  onClick={handleWhatsAppCheckout}
-                  disabled={cart.length === 0}
-                  className="w-full bg-[#1A1A1A] hover:bg-black text-white py-4 rounded-xl font-bold flex items-center justify-center gap-2 transition-all active:scale-[0.98] shadow-lg shadow-black/10 disabled:opacity-50 touch-manipulation"
-                >
-                  Continuar por WhatsApp <ArrowRight size={18} />
-                </button>
-                <p className="text-[10px] font-medium text-center text-[#A1A1AA]">
-                  El pago y envío se coordinan de forma segura por WhatsApp.
-                </p>
+                <button onClick={handleWhatsAppCheckout} disabled={cart.length === 0} className="w-full bg-[#1A1A1A] hover:bg-black text-white py-4 rounded-xl font-bold flex items-center justify-center gap-2 transition-all active:scale-[0.98] shadow-lg shadow-black/10 disabled:opacity-50 touch-manipulation">Continuar por WhatsApp <ArrowRight size={18} /></button>
               </div>
             )}
           </div>
@@ -537,21 +486,13 @@ export default function TiendaPage() {
       {/* --- LIGHTBOX --- */}
       {lightboxUrl && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/90 backdrop-blur-sm animate-in fade-in" onClick={() => setLightboxUrl(null)}>
-          <button className="absolute top-4 right-4 p-3 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors touch-manipulation z-50">
-            <X size={24} />
-          </button>
-          
+          <button className="absolute top-4 right-4 p-3 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors touch-manipulation z-50"><X size={24} /></button>
           {lightboxUrl === 'fallback' ? (
             <div className="w-64 h-64 bg-white rounded-3xl flex items-center justify-center animate-in zoom-in-90 shadow-2xl relative" onClick={e => e.stopPropagation()}>
-              <SockIcon size={120} className="text-[#EAEAEC]" />
+              <img src={STORE_LOGO_URL} alt="Sin imagen" className="w-24 h-24 object-contain opacity-20 grayscale" />
             </div>
           ) : (
-            <img 
-              src={lightboxUrl} 
-              alt="Vista ampliada" 
-              className="max-w-[95vw] max-h-[90vh] rounded-2xl shadow-2xl object-contain animate-in zoom-in-90 relative" 
-              onClick={e => e.stopPropagation()} 
-            />
+            <img src={lightboxUrl} alt="Vista ampliada" className="max-w-[95vw] max-h-[90vh] rounded-2xl shadow-2xl object-contain animate-in zoom-in-90 relative" onClick={e => e.stopPropagation()} />
           )}
         </div>
       )}

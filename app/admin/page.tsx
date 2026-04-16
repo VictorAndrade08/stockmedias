@@ -8,8 +8,14 @@ import { createClient } from '@supabase/supabase-js';
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL as string;
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY as string;
 
+// --- SOLUCIÓN ANTI-CACHÉ DE REDDIT 2026 ---
+// Forzamos al fetch global a usar 'no-store' para que Supabase NUNCA use caché del navegador ni de Next.js
 const supabase = (supabaseUrl && supabaseKey) 
-  ? createClient(supabaseUrl, supabaseKey) 
+  ? createClient(supabaseUrl, supabaseKey, {
+      global: {
+        fetch: (url, options) => fetch(url, { ...options, cache: 'no-store' })
+      }
+    }) 
   : null;
 
 const STORE_ACCESS_PIN = "4321";
@@ -662,7 +668,7 @@ function PendingOrdersView({ products, userId, pendingOrders, onRefresh }: { pro
   const handleCompleteOrder = async (order: PendingOrder) => {
     if (!userId || !supabase) return;
     try {
-      const saleDate = new Date().toISOString(); 
+      const saleDate = new Date().toISOString(); // Se usa la misma fecha para agrupar
       for (const item of order.items) {
         await supabase.from('sales').insert([{
           product_id: item.product_id,
@@ -678,7 +684,7 @@ function PendingOrdersView({ products, userId, pendingOrders, onRefresh }: { pro
       await supabase.from('pending_orders').delete().eq('id', order.id).throwOnError();
       
       onRefresh();
-      setSuccessMsg('¡Pedido finalizado y pasado a ventas!');
+      setSuccessMsg('¡Pedido finalizado y pasado a Ventas!');
       setTimeout(() => setSuccessMsg(''), 3000);
     } catch (err) { console.error(err); alert('Error al completar pedido.'); }
   };
@@ -784,7 +790,7 @@ function PendingOrdersView({ products, userId, pendingOrders, onRefresh }: { pro
                           <DollarSign className="absolute left-2.5 top-2.5 text-[#A1A1AA]" size={13} />
                           <input type="number" step="0.01" value={item.salePrice} onChange={e => handleCartPrice(item.product.id, e.target.value)} className="w-20 pl-7 pr-2 py-2 bg-[#F9FAFA] border border-[#EAEAEC] rounded-[0.75rem] focus:ring-2 focus:ring-[#C8F169] focus:border-[#C8F169] outline-none text-sm" placeholder="0.00" />
                         </div>
-                        <button type="button" onClick={() => setCart(cart.filter(c => c.product.id !== item.product.id))} className="p-1.5 rounded-[0.5rem] text-[#A1A1AA] hover:text-red-500 hover:bg-red-50 transition-colors touch-manipulation"><Trash2 size={16} strokeWidth={2.5} /></button>
+                        <button type="button" onClick={() => setCart(cart.filter(c => c.product.id !== item.product.id))} className="p-1.5 rounded-[0.5rem] text-[#A1A1AA] hover:text-red-500 hover:bg-red-50 transition-colors touch-manipulation"><X size={14} /></button>
                       </div>
                     </div>
                   ))}
@@ -1342,7 +1348,7 @@ function RecordSaleView({ products, userId, onRefresh }: { products: Product[]; 
                           +${((parseFloat(item.salePrice) - parseFloat(item.saleCost)) * item.quantity).toFixed(2)}
                         </span>
                       )}
-                      <button type="button" onClick={() => setCart(cart.filter(c => c.product.id !== item.product.id))} className="p-1.5 rounded-[0.5rem] text-[#A1A1AA] hover:text-red-500 hover:bg-red-50 transition-colors touch-manipulation"><Trash2 size={16} strokeWidth={2.5} /></button>
+                      <button type="button" onClick={() => setCart(cart.filter(c => c.product.id !== item.product.id))} className="p-1.5 rounded-[0.5rem] text-[#A1A1AA] hover:text-red-50 hover:bg-red-50 transition-colors touch-manipulation"><Trash2 size={16} strokeWidth={2.5} /></button>
                     </div>
                   </div>
                 ))}
@@ -1980,7 +1986,7 @@ function InventoryView({ products, userId, sales, restocks, onRefresh }: { produ
       ) : (
         <div className="bg-white rounded-[2rem] shadow-[0_8px_30px_rgb(0,0,0,0.04)] border border-[#EAEAEC] overflow-hidden w-full animate-in fade-in">
           <div className="overflow-x-auto w-full" style={{ WebkitOverflowScrolling: 'touch' } as React.CSSProperties}>
-            <table className="w-full text-left border-collapse min-w-[600px]">
+            <table className="w-full text-left border-collapse min-w-[800px]">
               <thead>
                 <tr className="bg-white text-[#A1A1AA] text-[11px] font-bold uppercase tracking-widest border-b border-[#EAEAEC]">
                   <th className="px-4 md:px-6 py-4 md:py-5 w-20">Imagen</th>
