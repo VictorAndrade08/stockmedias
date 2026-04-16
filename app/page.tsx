@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { ShoppingBag, User, X, ArrowRight, ShoppingCart, Check, ZoomIn, Search } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
+import { useRouter } from 'next/navigation'; 
 
 // --- INICIALIZACIÓN DE SUPABASE (ANTI-CACHÉ REDDIT 2026) ---
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL as string;
@@ -52,6 +53,8 @@ const normalizeText = (text: string) => {
 };
 
 export default function TiendaPage() {
+  const router = useRouter(); 
+  
   const [allProducts, setAllProducts] = useState<StoreProduct[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -254,7 +257,7 @@ export default function TiendaPage() {
           
           <div 
             className="flex items-center gap-1.5 sm:gap-2 text-xl md:text-[1.35rem] font-bold tracking-tight text-[#1A1A1A] cursor-pointer" 
-            onClick={() => { window.scrollTo(0,0); window.location.reload(); }}
+            onClick={() => router.push('/')}
           >
             <img 
               src={STORE_LOGO_URL} 
@@ -483,16 +486,24 @@ export default function TiendaPage() {
         </div>
       )}
 
-      {/* --- LIGHTBOX --- */}
+      {/* --- LIGHTBOX (CON LA 'X' OPTIMIZADA PARA RESPONSIVE) --- */}
       {lightboxUrl && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/90 backdrop-blur-sm animate-in fade-in" onClick={() => setLightboxUrl(null)}>
-          <button className="absolute top-4 right-4 p-3 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors touch-manipulation z-50"><X size={24} /></button>
+          <button className="absolute top-6 right-4 md:top-8 md:right-8 p-3 rounded-full bg-white/20 hover:bg-white/30 backdrop-blur-md text-white transition-colors touch-manipulation z-[100] shadow-lg">
+            <X size={24} />
+          </button>
+          
           {lightboxUrl === 'fallback' ? (
             <div className="w-64 h-64 bg-white rounded-3xl flex items-center justify-center animate-in zoom-in-90 shadow-2xl relative" onClick={e => e.stopPropagation()}>
               <img src={STORE_LOGO_URL} alt="Sin imagen" className="w-24 h-24 object-contain opacity-20 grayscale" />
             </div>
           ) : (
-            <img src={lightboxUrl} alt="Vista ampliada" className="max-w-[95vw] max-h-[90vh] rounded-2xl shadow-2xl object-contain animate-in zoom-in-90 relative" onClick={e => e.stopPropagation()} />
+            <img 
+              src={lightboxUrl} 
+              alt="Vista ampliada" 
+              className="max-w-[95vw] max-h-[90vh] rounded-2xl shadow-2xl object-contain animate-in zoom-in-90 relative" 
+              onClick={e => e.stopPropagation()} 
+            />
           )}
         </div>
       )}
