@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
-import { LayoutDashboard, Package, ShoppingCart, Plus, Search, DollarSign, TrendingUp, PackageMinus, Pencil, X, Bell, RefreshCw, Trash2, ImagePlus, ZoomIn, ClipboardList, CheckCircle, List, LayoutGrid } from 'lucide-react';
+import { LayoutDashboard, Package, ShoppingCart, Plus, Search, DollarSign, TrendingUp, PackageMinus, Pencil, X, Bell, RefreshCw, Trash2, ImagePlus, ZoomIn, ClipboardList, CheckCircle, List, LayoutGrid, Lock } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 
 // --- INICIALIZACIÓN DE LA BASE DE DATOS EN LA NUBE (SUPABASE) ---
@@ -11,6 +11,9 @@ const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY as 
 const supabase = (supabaseUrl && supabaseKey) 
   ? createClient(supabaseUrl, supabaseKey) 
   : null;
+
+const STORE_ACCESS_PIN = "4321";
+const STORE_LOGO_URL = "https://pub-25cde2184a5249da96fa022aae951321.r2.dev/logo/logo.png";
 
 // --- SUBIDA DE IMAGEN A CLOUDFLARE R2 ---
 async function uploadImageToR2(file: File): Promise<string> {
@@ -59,7 +62,6 @@ async function suggestProductName(
 ): Promise<string[]> {
   const namesToShow = existingNames.slice(0, 10).join(', ');
   
-  // Prompt optimizado para velocidad, nombres extensos y análisis estricto de imagen
   const prompt = `Eres un asistente experto en catalogación para una tienda de calcetines.
 Instrucciones OBLIGATORIAS:
 1. Si hay una imagen, analízala minuciosamente para detectar personajes, colores, patrones y franquicias.
@@ -95,7 +97,7 @@ Ejemplo perfecto: "Hora de Aventura Medias - BMO - Verde".
       body: JSON.stringify({ 
         contents: [{ parts }],
         generationConfig: {
-          temperature: 0.4, // Menos creatividad alucinada, más enfoque en la estructura solicitada
+          temperature: 0.4,
         }
       })
     }
@@ -110,7 +112,6 @@ Ejemplo perfecto: "Hora de Aventura Medias - BMO - Verde".
 
   const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
 
-  // Limpieza estricta de formato
   const cleanText = text
     .replace(/```[\s\S]*?```/g, '') 
     .replace(/[*_]/g, '')            
@@ -207,7 +208,34 @@ export default function App() {
   const [restocks, setRestocks] = useState<Restock[]>([]);
   const [pendingOrders, setPendingOrders] = useState<PendingOrder[]>([]);
 
-  // --- AUTENTICACIÓN ---
+  // --- ESTADO DE AUTENTICACIÓN (PIN) ---
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [pinInput, setPinInput] = useState('');
+  const [pinError, setPinError] = useState(false);
+  const [authChecked, setAuthChecked] = useState(false);
+
+  useEffect(() => {
+    const savedAccess = localStorage.getItem('wolfe_socks_admin_access');
+    if (savedAccess === 'granted') {
+      setIsAuthenticated(true);
+    }
+    setAuthChecked(true);
+  }, []);
+
+  const handlePinSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (pinInput === STORE_ACCESS_PIN) {
+      setIsAuthenticated(true);
+      localStorage.setItem('wolfe_socks_admin_access', 'granted');
+      setPinError(false);
+    } else {
+      setPinError(true);
+      setPinInput('');
+      setTimeout(() => setPinError(false), 2000);
+    }
+  };
+
+  // --- AUTENTICACIÓN SUPABASE ---
   useEffect(() => {
     if (!supabase) return;
 
@@ -233,7 +261,7 @@ export default function App() {
 
   // --- CARGA DE DATOS ---
   const fetchData = useCallback(async () => {
-    if (!user || !supabase) return;
+    if (!user || !supabase || !isAuthenticated) return;
     const { data: prods } = await supabase.from('products').select('*');
     if (prods) {
       setProducts((prods as Product[]).map((p) => ({ ...p, imageUrl: p.image_url })));
@@ -252,10 +280,10 @@ export default function App() {
     }
     const { data: ordersData } = await supabase.from('pending_orders').select('*').order('date', { ascending: false });
     if (ordersData) setPendingOrders(ordersData as PendingOrder[]);
-  }, [user]);
+  }, [user, isAuthenticated]);
 
   useEffect(() => {
-    if (!user || !supabase) return;
+    if (!user || !supabase || !isAuthenticated) return;
     fetchData();
     const channel = supabase.channel('realtime-db')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, fetchData)
@@ -264,7 +292,7 @@ export default function App() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'pending_orders' }, fetchData)
       .subscribe();
     return () => { supabase.removeChannel(channel); };
-  }, [user, fetchData]);
+  }, [user, fetchData, isAuthenticated]);
 
   const dashboardStats = useMemo<DashboardStats>(() => {
     let totalRevenue = 0, totalProfit = 0, itemsSold = 0;
@@ -275,6 +303,53 @@ export default function App() {
     });
     return { totalRevenue, totalProfit, itemsSold };
   }, [sales]);
+
+  if (!authChecked) return null;
+
+  // --- PANTALLA DE LOGIN (PUERTA DE ENTRADA) ---
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-[#F4F5F4] flex flex-col items-center justify-center p-6 selection:bg-[#C8F169] selection:text-[#111111]">
+        <div className="w-full max-w-sm bg-white rounded-[2rem] p-8 md:p-10 shadow-[0_8px_30px_rgb(0,0,0,0.04)] border border-[#EAEAEC] flex flex-col items-center text-center animate-in fade-in zoom-in-95 duration-500">
+          <img 
+            src={STORE_LOGO_URL} 
+            alt="Wolfe Socks Logo" 
+            className="h-16 md:h-20 w-auto object-contain mb-6" 
+          />
+          <h1 className="text-2xl font-black tracking-tight text-[#111111] mb-2">
+            SocksManager
+          </h1>
+          <p className="text-sm font-medium text-[#71717A] mb-8">
+            Ingresa el PIN de seguridad para gestionar el inventario.
+          </p>
+
+          <form onSubmit={handlePinSubmit} className="w-full">
+            <div className="relative mb-6">
+              <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                <Lock size={20} className={`${pinError ? 'text-red-400' : 'text-[#A1A1AA]'}`} />
+              </div>
+              <input
+                type="password"
+                value={pinInput}
+                onChange={(e) => setPinInput(e.target.value)}
+                placeholder="****"
+                maxLength={4}
+                className={`w-full pl-12 pr-4 py-4 bg-[#F9FAFA] border rounded-2xl text-center text-xl tracking-[0.5em] font-black focus:ring-2 outline-none transition-all ${pinError ? 'border-red-300 focus:ring-red-200 text-red-500' : 'border-[#EAEAEC] focus:ring-[#1A1A1A] focus:border-[#1A1A1A] text-[#111111]'}`}
+                autoFocus
+              />
+            </div>
+            
+            <button 
+              type="submit"
+              className="w-full bg-[#1A1A1A] hover:bg-black text-white py-4 rounded-xl font-bold flex items-center justify-center gap-2 transition-all active:scale-[0.98] shadow-md touch-manipulation"
+            >
+              Entrar al Panel
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
 
   if (!supabase) {
     return (
@@ -587,7 +662,7 @@ function PendingOrdersView({ products, userId, pendingOrders, onRefresh }: { pro
   const handleCompleteOrder = async (order: PendingOrder) => {
     if (!userId || !supabase) return;
     try {
-      const saleDate = new Date().toISOString(); // Se usa la misma fecha para agrupar
+      const saleDate = new Date().toISOString(); 
       for (const item of order.items) {
         await supabase.from('sales').insert([{
           product_id: item.product_id,
@@ -709,7 +784,7 @@ function PendingOrdersView({ products, userId, pendingOrders, onRefresh }: { pro
                           <DollarSign className="absolute left-2.5 top-2.5 text-[#A1A1AA]" size={13} />
                           <input type="number" step="0.01" value={item.salePrice} onChange={e => handleCartPrice(item.product.id, e.target.value)} className="w-20 pl-7 pr-2 py-2 bg-[#F9FAFA] border border-[#EAEAEC] rounded-[0.75rem] focus:ring-2 focus:ring-[#C8F169] focus:border-[#C8F169] outline-none text-sm" placeholder="0.00" />
                         </div>
-                        <button type="button" onClick={() => setCart(cart.filter(c => c.product.id !== item.product.id))} className="p-1.5 rounded-[0.5rem] text-[#A1A1AA] hover:text-red-500 hover:bg-red-50 transition-colors touch-manipulation"><X size={14} /></button>
+                        <button type="button" onClick={() => setCart(cart.filter(c => c.product.id !== item.product.id))} className="p-1.5 rounded-[0.5rem] text-[#A1A1AA] hover:text-red-500 hover:bg-red-50 transition-colors touch-manipulation"><Trash2 size={16} strokeWidth={2.5} /></button>
                       </div>
                     </div>
                   ))}
@@ -1267,7 +1342,7 @@ function RecordSaleView({ products, userId, onRefresh }: { products: Product[]; 
                           +${((parseFloat(item.salePrice) - parseFloat(item.saleCost)) * item.quantity).toFixed(2)}
                         </span>
                       )}
-                      <button type="button" onClick={() => setCart(cart.filter(c => c.product.id !== item.product.id))} className="p-1.5 rounded-[0.5rem] text-[#A1A1AA] hover:text-red-500 hover:bg-red-50 transition-colors touch-manipulation"><X size={14} /></button>
+                      <button type="button" onClick={() => setCart(cart.filter(c => c.product.id !== item.product.id))} className="p-1.5 rounded-[0.5rem] text-[#A1A1AA] hover:text-red-500 hover:bg-red-50 transition-colors touch-manipulation"><Trash2 size={16} strokeWidth={2.5} /></button>
                     </div>
                   </div>
                 ))}
@@ -1619,6 +1694,27 @@ function InventoryView({ products, userId, sales, restocks, onRefresh }: { produ
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const [isDraggingEdit, setIsDraggingEdit] = useState<boolean>(false);
 
+  // --- BORRADO RÁPIDO ---
+  const [quickDeleteId, setQuickDeleteId] = useState<string | null>(null);
+
+  const handleQuickDeleteProduct = async (product: Product) => {
+    if (!supabase || !userId) return;
+    try {
+      if (product.imageUrl) {
+        await deleteImageFromR2(product.imageUrl);
+      }
+      await supabase.from('sales').delete().eq('product_id', product.id).throwOnError();
+      await supabase.from('restocks').delete().eq('product_id', product.id).throwOnError();
+      await supabase.from('products').delete().eq('id', product.id).eq('user_id', userId).throwOnError();
+      
+      setQuickDeleteId(null);
+      onRefresh();
+    } catch (err: any) { 
+      console.error("Error eliminando producto:", err); 
+      alert("Hubo un error al eliminar. Revisa la consola: " + err.message);
+    }
+  };
+
   const handleImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -1862,7 +1958,19 @@ function InventoryView({ products, userId, sales, restocks, onRefresh }: { produ
                     <span className="align-middle">{product.name}</span>
                   </h3>
                 </div>
-                <span className={`px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest rounded-full flex-shrink-0 ${product.stock > 10 ? 'bg-[#E8F8B6]/50 text-[#4A6310]' : product.stock > 0 ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-600'}`}>{product.stock} en stock</span>
+                {quickDeleteId === product.id ? (
+                  <div className="flex items-center gap-1.5 bg-red-50 px-2 py-1 rounded-full animate-in fade-in">
+                    <button onClick={(e) => { e.stopPropagation(); handleQuickDeleteProduct(product); }} className="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white text-[10px] font-bold rounded-full transition-colors">BORRAR</button>
+                    <button onClick={(e) => { e.stopPropagation(); setQuickDeleteId(null); }} className="px-2.5 py-1 bg-white border border-[#EAEAEC] text-[#71717A] text-[10px] font-bold rounded-full transition-colors">X</button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <span className={`px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest rounded-full flex-shrink-0 ${product.stock > 10 ? 'bg-[#E8F8B6]/50 text-[#4A6310]' : product.stock > 0 ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-600'}`}>{product.stock} en stock</span>
+                    <button onClick={(e) => { e.stopPropagation(); setQuickDeleteId(product.id); }} className="p-1.5 text-[#A1A1AA] hover:text-red-500 bg-[#F9FAFA] border border-[#EAEAEC] hover:bg-red-50 hover:border-red-200 rounded-full transition-colors touch-manipulation">
+                      <Trash2 size={13} strokeWidth={2.5} />
+                    </button>
+                  </div>
+                )}
               </div>
               <div className="w-full h-40 bg-[#F9FAFA] rounded-[1.25rem] mb-5 flex items-center justify-center border border-[#EAEAEC] overflow-hidden relative">{product.imageUrl ? <img src={product.imageUrl} alt={product.name} className="w-full h-full object-cover" /> : <span className="text-[#A1A1AA] text-sm font-medium tracking-wide">[Sin imagen]</span>}</div>
               <div className="mt-auto space-y-2"><div className="flex justify-between items-center text-sm bg-[#F9FAFA] p-3 rounded-[1rem] border border-[#EAEAEC]"><span className="text-[#71717A] font-medium text-xs">Costo base:</span><span className="font-medium text-[#111111]">${(product.cost || 0).toFixed(2)}</span></div><div className="flex justify-between items-center text-sm bg-white p-3 rounded-[1rem] border border-[#EAEAEC]"><span className="text-[#71717A] font-medium text-xs">Precio Venta:</span><span className="font-medium tracking-tight text-[#111111]">${(product.price || 0).toFixed(2)}</span></div></div>
@@ -1880,7 +1988,7 @@ function InventoryView({ products, userId, sales, restocks, onRefresh }: { produ
                   <th className="px-4 md:px-6 py-4 md:py-5">Stock</th>
                   <th className="px-4 md:px-6 py-4 md:py-5">Costo Base</th>
                   <th className="px-4 md:px-6 py-4 md:py-5">Precio Venta</th>
-                  <th className="px-4 md:px-6 py-4 md:py-5"></th>
+                  <th className="px-4 md:px-6 py-4 md:py-5 text-right">Acciones</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#EAEAEC]/60">
@@ -1917,7 +2025,20 @@ function InventoryView({ products, userId, sales, restocks, onRefresh }: { produ
                     <td className="px-4 md:px-6 py-3 md:py-4 font-medium text-[#71717A]">${(product.cost || 0).toFixed(2)}</td>
                     <td className="px-4 md:px-6 py-3 md:py-4 font-medium text-[#111111]">${(product.price || 0).toFixed(2)}</td>
                     <td className="px-4 md:px-6 py-3 md:py-4 text-right">
-                       <button className="text-[#71717A] hover:text-[#111111] font-medium text-xs px-4 py-2 bg-white border border-[#EAEAEC] hover:border-[#C8F169] rounded-[1rem] transition-colors touch-manipulation">Ver Detalles</button>
+                      <div className="flex justify-end items-center gap-2">
+                        {quickDeleteId === product.id ? (
+                          <div className="flex items-center gap-1.5 bg-red-50 px-2 py-1 rounded-full mr-2">
+                            <span className="text-[10px] font-bold text-red-500 uppercase tracking-widest ml-1">¿Borrar?</span>
+                            <button onClick={(e) => { e.stopPropagation(); handleQuickDeleteProduct(product); }} className="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white text-[10px] font-bold rounded-full transition-colors">SÍ</button>
+                            <button onClick={(e) => { e.stopPropagation(); setQuickDeleteId(null); }} className="px-2.5 py-1 bg-white border border-[#EAEAEC] text-[#71717A] text-[10px] font-bold rounded-full transition-colors">NO</button>
+                          </div>
+                        ) : (
+                          <button onClick={(e) => { e.stopPropagation(); setQuickDeleteId(product.id); }} className="p-2 text-[#A1A1AA] hover:text-red-500 bg-white border border-[#EAEAEC] hover:bg-red-50 hover:border-red-200 rounded-full transition-colors touch-manipulation">
+                            <Trash2 size={14} strokeWidth={2.5} />
+                          </button>
+                        )}
+                        <button className="text-[#71717A] hover:text-[#111111] font-medium text-xs px-4 py-2 bg-white border border-[#EAEAEC] hover:border-[#C8F169] rounded-[1rem] transition-colors touch-manipulation">Ver Detalles</button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -2139,10 +2260,10 @@ function InventoryView({ products, userId, sales, restocks, onRefresh }: { produ
               </div>
             </div>
 
-            {/* Zona peligrosa - Eliminar producto */}
+            {/* Zona peligrosa - Eliminar producto (Mantenida por seguridad, pero con acceso rápido fuera) */}
             <div className="mt-6 pt-6 border-t border-red-100">
               {!confirmDelete ? (
-                <button type="button" onClick={() => setConfirmDelete(true)} className="flex items-center gap-2 text-red-500 hover:text-red-700 bg-red-50 hover:bg-red-100 border border-red-100 px-5 py-3 rounded-[1.25rem] text-sm font-medium transition-colors touch-manipulation"><Trash2 size={15} /><span>Eliminar producto</span></button>
+                <button type="button" onClick={() => setConfirmDelete(true)} className="flex items-center gap-2 text-red-500 hover:text-red-700 bg-red-50 hover:bg-red-100 border border-red-100 px-5 py-3 rounded-[1.25rem] text-sm font-medium transition-colors touch-manipulation"><Trash2 size={15} /><span>Eliminar producto completo</span></button>
               ) : (
                 <div className="bg-red-50 border border-red-200 rounded-[1.5rem] p-4 space-y-3">
                   <p className="text-sm font-medium text-red-700">¿Eliminar <span className="font-bold">{detailProduct.name}</span>? Esto borrará también todas sus ventas y reabastecimientos. Esta acción es irreversible.</p>
@@ -2158,7 +2279,7 @@ function InventoryView({ products, userId, sales, restocks, onRefresh }: { produ
         </div>
       )}
 
-      {/* --- Lightbox Global (Funciona en la vista de Lista y en el Detalle) --- */}
+      {/* --- Lightbox Global --- */}
       {lightboxUrl && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-sm animate-in fade-in" onClick={() => setLightboxUrl(null)}>
           <button className="absolute top-4 right-4 p-2 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors touch-manipulation"><X size={22} /></button>
