@@ -38,6 +38,17 @@ async function deleteImageFromR2(imageUrl: string) {
   }
 }
 
+// --- GENERADOR DE SKU CORTO (Best Practices Reddit 2026) ---
+function generateShortCode(): string {
+  // Excluimos: O, 0, I, 1, L para evitar confusiones al leer (4 a 5 caracteres)
+  const chars = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
+  let result = '';
+  for (let i = 0; i < 5; i++) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return result;
+}
+
 // --- GEMINI NAME SUGGESTER ---
 const GEMINI_API_KEY = process.env.NEXT_PUBLIC_GEMINI_API_KEY as string;
 
@@ -112,6 +123,7 @@ Ejemplo perfecto: "Hora de Aventura Medias - BMO - Verde".
 // --- TIPOS ---
 interface Product {
   id: string;
+  sku?: string;
   name: string;
   cost: number;
   price: number;
@@ -407,7 +419,10 @@ function PendingOrdersView({ products, userId, pendingOrders, onRefresh }: { pro
 
   const filteredProducts = useMemo<Product[]>(() => {
     const base = searchTerm
-      ? products.filter(p => p.name.toLowerCase().includes(searchTerm.toLowerCase()))
+      ? products.filter(p => 
+          p.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+          (p.sku && p.sku.toLowerCase().includes(searchTerm.toLowerCase()))
+        )
       : [...products];
     return base.sort((a, b) => b.stock - a.stock);
   }, [searchTerm, products]);
@@ -449,6 +464,7 @@ function PendingOrdersView({ products, userId, pendingOrders, onRefresh }: { pro
     if (!userId || !supabase) return;
     try {
       const { data } = await supabase.from('products').insert([{
+        sku: generateShortCode(),
         name: newProduct.name, 
         cost: parseFloat(newProduct.cost), 
         price: parseFloat(newProduct.price), 
@@ -669,7 +685,7 @@ function PendingOrdersView({ products, userId, pendingOrders, onRefresh }: { pro
                 <label className="block text-sm font-medium text-[#71717A] mb-3">Buscar Producto para el Pedido</label>
                 <div className="relative">
                   <Search className="absolute left-4 top-4 text-[#A1A1AA]" size={20} />
-                  <input type="text" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full pl-12 pr-4 py-3.5 bg-[#F9FAFA] border border-[#EAEAEC] rounded-[1.25rem] focus:ring-2 focus:ring-[#C8F169] focus:border-[#C8F169] transition-all outline-none shadow-[inset_0_2px_4px_rgba(0,0,0,0.02)] text-base" placeholder="Ej. Medias Nike..." autoFocus />
+                  <input type="text" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full pl-12 pr-4 py-3.5 bg-[#F9FAFA] border border-[#EAEAEC] rounded-[1.25rem] focus:ring-2 focus:ring-[#C8F169] focus:border-[#C8F169] transition-all outline-none shadow-[inset_0_2px_4px_rgba(0,0,0,0.02)] text-base" placeholder="Ej. Medias Nike o código SKU..." autoFocus />
                 </div>
               </div>
 
@@ -753,7 +769,10 @@ function PendingOrdersView({ products, userId, pendingOrders, onRefresh }: { pro
                         >
                           {p.imageUrl && <img src={p.imageUrl} alt={p.name} className="w-full h-20 object-cover rounded-[0.75rem] mb-2 border border-[#EAEAEC]" />}
                           {!p.imageUrl && <div className="w-full h-20 bg-[#EAEAEC] rounded-[0.75rem] mb-2 flex items-center justify-center"><Package size={20} className="text-[#A1A1AA]" /></div>}
-                          <p className="text-xs font-medium text-[#111111] leading-tight line-clamp-2 mb-1">{p.name}</p>
+                          <p className="text-sm font-medium text-[#111111] leading-tight line-clamp-2 mb-1">
+                            <span className="font-bold text-[#4A6310] bg-[#E8F8B6]/50 px-1.5 py-0.5 rounded-md mr-1">#{p.sku || 'NUEVO'}</span>
+                            {p.name}
+                          </p>
                           <p className="text-xs font-bold text-[#111111]">${(p.price || 0).toFixed(2)}</p>
                           <span className={`mt-1 text-[10px] font-bold px-2 py-0.5 rounded-full ${p.stock > 10 ? 'bg-[#E8F8B6]/50 text-[#4A6310]' : p.stock > 0 ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-600'}`}>{p.stock === 0 ? 'Sin stock' : `${p.stock} uds.`}</span>
                           {inCart && <div className="absolute top-2 right-2 w-5 h-5 bg-[#C8F169] rounded-full flex items-center justify-center text-[10px] font-bold text-[#1A1A1A]">{inCart.quantity}</div>}
@@ -1007,7 +1026,10 @@ function RecordSaleView({ products, userId, onRefresh }: { products: Product[]; 
 
   const filteredProducts = useMemo<Product[]>(() => {
     const base = searchTerm
-      ? products.filter(p => p.name.toLowerCase().includes(searchTerm.toLowerCase()))
+      ? products.filter(p => 
+          p.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+          (p.sku && p.sku.toLowerCase().includes(searchTerm.toLowerCase()))
+        )
       : [...products];
     return base.sort((a, b) => b.stock - a.stock);
   }, [searchTerm, products]);
@@ -1055,6 +1077,7 @@ function RecordSaleView({ products, userId, onRefresh }: { products: Product[]; 
     if (!userId || !supabase) return;
     try {
       const { data } = await supabase.from('products').insert([{
+        sku: generateShortCode(),
         name: newProduct.name, 
         cost: parseFloat(newProduct.cost), 
         price: parseFloat(newProduct.price), 
@@ -1212,10 +1235,10 @@ function RecordSaleView({ products, userId, onRefresh }: { products: Product[]; 
           <>
             {/* Búsqueda */}
             <div className="relative w-full mb-5">
-              <label className="block text-sm font-medium text-[#71717A] mb-3">Buscar Producto (escribe el nombre)</label>
+              <label className="block text-sm font-medium text-[#71717A] mb-3">Buscar Producto (escribe el nombre o código SKU)</label>
               <div className="relative">
                 <Search className="absolute left-4 top-4 text-[#A1A1AA]" size={20} />
-                <input type="text" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full pl-12 pr-4 py-3.5 bg-[#F9FAFA] border border-[#EAEAEC] rounded-[1.25rem] focus:ring-2 focus:ring-[#C8F169] focus:border-[#C8F169] transition-all outline-none shadow-[inset_0_2px_4px_rgba(0,0,0,0.02)] text-base" placeholder="Ej. Medias Nike..." autoFocus />
+                <input type="text" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full pl-12 pr-4 py-3.5 bg-[#F9FAFA] border border-[#EAEAEC] rounded-[1.25rem] focus:ring-2 focus:ring-[#C8F169] focus:border-[#C8F169] transition-all outline-none shadow-[inset_0_2px_4px_rgba(0,0,0,0.02)] text-base" placeholder="Ej. Medias Nike o código SKU..." autoFocus />
               </div>
             </div>
 
@@ -1284,7 +1307,10 @@ function RecordSaleView({ products, userId, onRefresh }: { products: Product[]; 
                       >
                         {p.imageUrl && <img src={p.imageUrl} alt={p.name} className="w-full h-20 object-cover rounded-[0.75rem] mb-2 border border-[#EAEAEC]" />}
                         {!p.imageUrl && <div className="w-full h-20 bg-[#EAEAEC] rounded-[0.75rem] mb-2 flex items-center justify-center"><Package size={20} className="text-[#A1A1AA]" /></div>}
-                        <p className="text-xs font-medium text-[#111111] leading-tight line-clamp-2 mb-1">{p.name}</p>
+                        <p className="text-sm font-medium text-[#111111] leading-tight line-clamp-2 mb-1">
+                          <span className="font-bold text-[#4A6310] bg-[#E8F8B6]/50 px-1.5 py-0.5 rounded-md mr-1">#{p.sku || 'NUEVO'}</span>
+                          {p.name}
+                        </p>
                         <p className="text-xs font-bold text-[#111111]">${(p.price || 0).toFixed(2)}</p>
                         <span className={`mt-1 text-[10px] font-bold px-2 py-0.5 rounded-full ${p.stock > 10 ? 'bg-[#E8F8B6]/50 text-[#4A6310]' : p.stock > 0 ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-600'}`}>{p.stock === 0 ? 'Sin stock' : `${p.stock} uds.`}</span>
                         {inCart && <div className="absolute top-2 right-2 w-5 h-5 bg-[#C8F169] rounded-full flex items-center justify-center text-[10px] font-bold text-[#1A1A1A]">{inCart.quantity}</div>}
@@ -1319,7 +1345,10 @@ function RecordSaleView({ products, userId, onRefresh }: { products: Product[]; 
                 {selectedProduct.imageUrl && <img src={selectedProduct.imageUrl} alt={selectedProduct.name} className="w-16 h-16 rounded-2xl object-cover border border-[#EAEAEC] shadow-sm flex-shrink-0" />}
                 <div className="flex-1">
                   <p className="text-[10px] text-[#71717A] font-bold uppercase tracking-widest mb-1">Producto Seleccionado</p>
-                  <p className="text-lg md:text-xl font-medium text-[#111111] leading-tight tracking-tight">{selectedProduct.name}</p>
+                  <p className="text-lg md:text-xl font-medium text-[#111111] leading-tight tracking-tight">
+                    {selectedProduct.sku && <span className="font-bold text-[#4A6310] bg-[#E8F8B6]/50 px-2 py-0.5 rounded-lg mr-2">#{selectedProduct.sku}</span>}
+                    {selectedProduct.name}
+                  </p>
                   <p className="text-sm text-[#71717A] mt-1 font-medium">Stock: <span className="text-[#111111]">{selectedProduct.stock}</span> | Costo base: <span className="text-[#111111]">${(selectedProduct.cost || 0).toFixed(2)}</span></p>
                 </div>
               </div>
@@ -1612,6 +1641,7 @@ function InventoryView({ products, userId, sales, restocks, onRefresh }: { produ
         }).eq('id', existingProduct.id).eq('user_id', userId).throwOnError();
       } else {
         await supabase.from('products').insert([{ 
+          sku: generateShortCode(),
           name: newProduct.name, 
           cost: parseFloat(newProduct.cost), 
           price: parseFloat(newProduct.price), 
@@ -1824,7 +1854,19 @@ function InventoryView({ products, userId, sales, restocks, onRefresh }: { produ
       ) : viewMode === 'grid' ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6 w-full animate-in fade-in">
           {products.map(product => (
-            <div key={product.id} onClick={() => handleOpenDetail(product)} className="bg-white p-5 rounded-[2rem] shadow-[0_4px_24px_rgba(0,0,0,0.02)] border border-[#EAEAEC] hover:shadow-[0_8px_30px_rgb(0,0,0,0.06)] transition-all duration-300 flex flex-col h-full cursor-pointer active:scale-[0.98]"><div className="flex justify-between items-start mb-5 gap-2"><h3 className="font-medium text-[#111111] text-base md:text-lg leading-tight tracking-tight flex-1">{product.name}</h3><span className={`px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest rounded-full flex-shrink-0 ${product.stock > 10 ? 'bg-[#E8F8B6]/50 text-[#4A6310]' : product.stock > 0 ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-600'}`}>{product.stock} en stock</span></div><div className="w-full h-40 bg-[#F9FAFA] rounded-[1.25rem] mb-5 flex items-center justify-center border border-[#EAEAEC] overflow-hidden relative">{product.imageUrl ? <img src={product.imageUrl} alt={product.name} className="w-full h-full object-cover" /> : <span className="text-[#A1A1AA] text-sm font-medium tracking-wide">[Sin imagen]</span>}</div><div className="mt-auto space-y-2"><div className="flex justify-between items-center text-sm bg-[#F9FAFA] p-3 rounded-[1rem] border border-[#EAEAEC]"><span className="text-[#71717A] font-medium text-xs">Costo base:</span><span className="font-medium text-[#111111]">${(product.cost || 0).toFixed(2)}</span></div><div className="flex justify-between items-center text-sm bg-white p-3 rounded-[1rem] border border-[#EAEAEC]"><span className="text-[#71717A] font-medium text-xs">Precio Venta:</span><span className="font-medium tracking-tight text-[#111111]">${(product.price || 0).toFixed(2)}</span></div></div></div>
+            <div key={product.id} onClick={() => handleOpenDetail(product)} className="bg-white p-5 rounded-[2rem] shadow-[0_4px_24px_rgba(0,0,0,0.02)] border border-[#EAEAEC] hover:shadow-[0_8px_30px_rgb(0,0,0,0.06)] transition-all duration-300 flex flex-col h-full cursor-pointer active:scale-[0.98]">
+              <div className="flex justify-between items-start mb-5 gap-2">
+                <div className="flex-1">
+                  <h3 className="font-medium text-[#111111] text-base md:text-lg leading-tight tracking-tight">
+                    {product.sku && <span className="font-bold text-[#4A6310] bg-[#E8F8B6]/50 px-2 py-0.5 rounded-lg mr-2 inline-block mb-1">#{product.sku}</span>}
+                    <span className="align-middle">{product.name}</span>
+                  </h3>
+                </div>
+                <span className={`px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest rounded-full flex-shrink-0 ${product.stock > 10 ? 'bg-[#E8F8B6]/50 text-[#4A6310]' : product.stock > 0 ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-600'}`}>{product.stock} en stock</span>
+              </div>
+              <div className="w-full h-40 bg-[#F9FAFA] rounded-[1.25rem] mb-5 flex items-center justify-center border border-[#EAEAEC] overflow-hidden relative">{product.imageUrl ? <img src={product.imageUrl} alt={product.name} className="w-full h-full object-cover" /> : <span className="text-[#A1A1AA] text-sm font-medium tracking-wide">[Sin imagen]</span>}</div>
+              <div className="mt-auto space-y-2"><div className="flex justify-between items-center text-sm bg-[#F9FAFA] p-3 rounded-[1rem] border border-[#EAEAEC]"><span className="text-[#71717A] font-medium text-xs">Costo base:</span><span className="font-medium text-[#111111]">${(product.cost || 0).toFixed(2)}</span></div><div className="flex justify-between items-center text-sm bg-white p-3 rounded-[1rem] border border-[#EAEAEC]"><span className="text-[#71717A] font-medium text-xs">Precio Venta:</span><span className="font-medium tracking-tight text-[#111111]">${(product.price || 0).toFixed(2)}</span></div></div>
+            </div>
           ))}
         </div>
       ) : (
@@ -1861,7 +1903,12 @@ function InventoryView({ products, userId, sales, restocks, onRefresh }: { produ
                         )}
                       </div>
                     </td>
-                    <td className="px-4 md:px-6 py-3 md:py-4 font-medium text-[#111111]">{product.name}</td>
+                    <td className="px-4 md:px-6 py-3 md:py-4 font-medium text-[#111111]">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {product.sku && <span className="font-bold text-[#4A6310] bg-[#E8F8B6]/50 px-2 py-1 rounded-[0.5rem] text-sm tracking-widest">#{product.sku}</span>}
+                        <span className="text-base">{product.name}</span>
+                      </div>
+                    </td>
                     <td className="px-4 md:px-6 py-3 md:py-4">
                       <span className={`px-3 py-1 text-[10px] font-bold uppercase tracking-widest rounded-full flex-shrink-0 ${product.stock > 10 ? 'bg-[#E8F8B6]/50 text-[#4A6310]' : product.stock > 0 ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-600'}`}>
                         {product.stock} en stock
@@ -1889,7 +1936,10 @@ function InventoryView({ products, userId, sales, restocks, onRefresh }: { produ
             <div className="flex justify-between items-start mb-6 gap-4">
               <div>
                 <p className="text-[10px] text-[#71717A] font-bold uppercase tracking-widest mb-1">Detalle del Producto</p>
-                <h3 className="text-xl font-medium text-[#111111] tracking-tight">{detailProduct.name}</h3>
+                <h3 className="text-xl font-medium text-[#111111] tracking-tight flex items-center gap-2 flex-wrap">
+                  {detailProduct.sku && <span className="font-bold text-[#4A6310] bg-[#E8F8B6]/50 px-2 py-0.5 rounded-lg">#{detailProduct.sku}</span>}
+                  <span>{detailProduct.name}</span>
+                </h3>
               </div>
               <button onClick={() => { setDetailProduct(null); onRefresh(); }} className="p-2 rounded-[0.75rem] text-[#A1A1AA] hover:text-[#111111] hover:bg-[#EAEAEC] transition-colors touch-manipulation flex-shrink-0"><X size={18} /></button>
             </div>
