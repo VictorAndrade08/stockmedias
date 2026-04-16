@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { ShoppingBag, User, Package, ChevronLeft, ChevronRight, X, ArrowRight, ShoppingCart, Check, ZoomIn, Search } from 'lucide-react';
+import { ShoppingBag, User, ChevronLeft, ChevronRight, X, ArrowRight, ShoppingCart, Check, ZoomIn, Search } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 
 // --- INICIALIZACIÓN DE SUPABASE ---
@@ -222,8 +222,15 @@ export default function TiendaPage() {
       {/* --- NAVEGACIÓN PRINCIPAL --- */}
       <header className="sticky top-0 z-40 bg-[#F4F5F4]/90 backdrop-blur-md border-b border-[#EAEAEC]">
         <div className="max-w-[1400px] mx-auto px-4 md:px-6 py-4 md:py-5 flex items-center justify-between">
-          <div className="flex items-center gap-2 md:gap-3 text-lg md:text-xl font-bold tracking-tight text-[#1A1A1A] cursor-pointer" onClick={() => window.scrollTo(0,0)}>
-            <Package className="text-[#1A1A1A]" strokeWidth={2.5} /> Wolfe Socks
+          
+          {/* Logo y Texto Ajustados */}
+          <div className="flex items-center gap-1.5 md:gap-2.5 text-xl md:text-[1.35rem] font-bold tracking-tight text-[#1A1A1A] cursor-pointer" onClick={() => window.scrollTo(0,0)}>
+            <img 
+              src="https://pub-25cde2184a5249da96fa022aae951321.r2.dev/logo/logo.png" 
+              alt="Wolfe Socks Logo" 
+              className="h-8 sm:h-10 md:h-11 w-auto object-contain transition-transform hover:scale-105" 
+            />
+            Wolfe Socks
           </div>
           
           <nav className="hidden md:flex items-center gap-8 text-sm font-medium text-[#111111]">
@@ -301,12 +308,12 @@ export default function TiendaPage() {
           </div>
         ) : (
           <>
-            {/* GRID RESPONSIVE: grid-cols-2 en móvil, grid-cols-3/4 en escritorio */}
+            {/* GRID RESPONSIVE */}
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-x-3 sm:gap-x-6 gap-y-8 sm:gap-y-12">
               {displayedProducts.map((product) => (
-                <div key={product.id} className="group flex flex-col">
+                <div key={product.id} className="group flex flex-col h-full">
                   
-                  {/* Contenedor de Imagen */}
+                  {/* Contenedor de Imagen con Botones Permanentes */}
                   <div 
                     className="relative w-full aspect-square bg-gradient-to-b from-[#EAEAEC] to-[#F4F5F4] rounded-2xl sm:rounded-[1.5rem] mb-3 md:mb-4 flex items-center justify-center overflow-hidden border border-[#EAEAEC]/50 shadow-sm transition-all duration-500 group-hover:shadow-md cursor-zoom-in"
                     onClick={() => setLightboxUrl(product.image_url || 'fallback')}
@@ -315,63 +322,56 @@ export default function TiendaPage() {
                       <img 
                         src={product.image_url} 
                         alt={product.name} 
-                        className="w-full h-full object-cover mix-blend-multiply group-hover:scale-105 transition-transform duration-700 ease-out" 
+                        className="absolute inset-0 w-full h-full object-cover mix-blend-multiply group-hover:scale-105 transition-transform duration-700 ease-out" 
                       />
                     ) : (
                       <SockIcon size={48} className="text-[#A1A1AA]/50 group-hover:scale-110 transition-transform duration-700" />
                     )}
                     
-                    {/* Lupa discreta */}
-                    <div className="absolute top-2 right-2 md:top-3 md:right-3 bg-white/80 backdrop-blur-sm p-1.5 rounded-full text-[#111111] opacity-0 group-hover:opacity-100 transition-opacity hidden md:block shadow-sm">
+                    {/* Lupa discreta en la esquina superior */}
+                    <div className="absolute top-2 right-2 md:top-3 md:right-3 bg-white/90 backdrop-blur-sm p-1.5 rounded-full text-[#111111] opacity-0 group-hover:opacity-100 transition-opacity hidden md:block shadow-sm z-20">
                       <ZoomIn size={16} />
                     </div>
 
-                    {/* Hover Actions (Desktop) */}
+                    {/* Botones de Acción (Siempre visibles dentro de la foto) */}
                     <div 
-                      className="absolute inset-x-0 bottom-0 p-3 md:p-4 opacity-0 translate-y-4 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-300 hidden md:flex gap-2"
+                      className="absolute inset-x-0 bottom-0 p-2 sm:p-3 flex gap-1.5 sm:gap-2 z-20"
                       onClick={(e) => e.stopPropagation()} 
                     >
                       <button 
                         onClick={() => handleAddToCart(product, false)}
-                        className={`flex-1 flex items-center justify-center gap-1 text-sm font-bold py-3 rounded-xl shadow-sm transition-all active:scale-95 ${addedItems[product.id] ? 'bg-[#E8F8B6] text-[#4A6310]' : 'bg-white/90 backdrop-blur-md hover:bg-white text-[#111111]'}`}
+                        className={`flex-1 flex items-center justify-center gap-1 text-xs sm:text-sm font-bold py-2.5 sm:py-3 rounded-[0.75rem] shadow-sm transition-all active:scale-95 touch-manipulation ${addedItems[product.id] ? 'bg-[#E8F8B6] text-[#4A6310]' : 'bg-white text-[#111111] hover:bg-gray-50'}`}
                       >
-                        {addedItems[product.id] ? <><Check size={16}/> Añadido</> : 'Añadir'}
+                        {addedItems[product.id] ? <><Check size={14}/> Añadido</> : 'Añadir'}
                       </button>
                       <button 
                         onClick={() => handleAddToCart(product, true)}
-                        className="flex-1 bg-[#1A1A1A] hover:bg-black text-white text-sm font-bold py-3 rounded-xl shadow-sm transition-colors active:scale-95"
+                        className="flex-1 bg-[#1A1A1A] hover:bg-black text-white text-xs sm:text-sm font-bold py-2.5 sm:py-3 rounded-[0.75rem] shadow-sm transition-colors active:scale-95 touch-manipulation"
                       >
                         Comprar
                       </button>
                     </div>
                   </div>
 
-                  {/* Info del Producto Adaptada para Móvil */}
-                  <div className="flex flex-col gap-1 mb-1">
+                  {/* Info del Producto */}
+                  <div className="flex flex-col flex-1">
+                    {/* SKU Refinado */}
                     {product.sku && (
-                      <span className="font-black text-xs sm:text-xl tracking-wider text-[#4A6310] bg-[#E8F8B6] px-2 sm:px-3 py-0.5 sm:py-1 rounded-md sm:rounded-[0.75rem] inline-block w-fit border border-[#C8F169]/50 shadow-sm mb-1">
+                      <span className="font-bold text-[10px] sm:text-xs tracking-widest text-[#4A6310] bg-[#E8F8B6] px-2 py-1 rounded-md inline-block w-fit mb-1.5 border border-[#C8F169]/40">
                         #{product.sku}
                       </span>
                     )}
+                    
                     <div className="flex flex-col sm:flex-row sm:justify-between items-start gap-1 sm:gap-2">
-                      <h3 className="font-bold text-[#111111] text-sm sm:text-base md:text-lg leading-tight flex-1 line-clamp-2">
+                      <h3 className="font-bold text-[#111111] text-sm sm:text-base leading-tight flex-1 line-clamp-2">
                         {product.name}
                       </h3>
-                      <span className="font-black text-[#111111] text-sm sm:text-base bg-[#F4F5F4] px-2 py-1 rounded-lg self-start sm:self-auto">
+                      <span className="font-black text-[#111111] text-sm sm:text-base bg-[#F4F5F4] px-2 py-1 rounded-lg self-start sm:self-auto shrink-0 mt-1 sm:mt-0">
                         ${product.price.toFixed(2)}
                       </span>
                     </div>
                   </div>
                   
-                  <div className="flex justify-end items-center mt-2 flex-1 items-end">
-                    {/* Acciones (Mobile) */}
-                    <button 
-                      onClick={() => handleAddToCart(product, true)}
-                      className="md:hidden w-full bg-[#1A1A1A] text-white text-xs sm:text-sm font-bold px-2 py-2.5 sm:py-3 rounded-lg sm:rounded-xl active:scale-95 shadow-md touch-manipulation"
-                    >
-                      Comprar
-                    </button>
-                  </div>
                 </div>
               ))}
             </div>
@@ -542,19 +542,19 @@ export default function TiendaPage() {
       {/* --- LIGHTBOX (IMAGEN EN GRANDE) --- */}
       {lightboxUrl && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/90 backdrop-blur-sm animate-in fade-in" onClick={() => setLightboxUrl(null)}>
-          <button className="absolute top-4 right-4 p-3 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors touch-manipulation">
+          <button className="absolute top-4 right-4 p-3 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors touch-manipulation z-50">
             <X size={24} />
           </button>
           
           {lightboxUrl === 'fallback' ? (
-            <div className="w-64 h-64 bg-white rounded-3xl flex items-center justify-center animate-in zoom-in-90 shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="w-64 h-64 bg-white rounded-3xl flex items-center justify-center animate-in zoom-in-90 shadow-2xl relative" onClick={e => e.stopPropagation()}>
               <SockIcon size={120} className="text-[#EAEAEC]" />
             </div>
           ) : (
             <img 
               src={lightboxUrl} 
               alt="Vista ampliada" 
-              className="max-w-[95vw] max-h-[90vh] rounded-2xl shadow-2xl object-contain animate-in zoom-in-90" 
+              className="max-w-[95vw] max-h-[90vh] rounded-2xl shadow-2xl object-contain animate-in zoom-in-90 relative" 
               onClick={e => e.stopPropagation()} 
             />
           )}
