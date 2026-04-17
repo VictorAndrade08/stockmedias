@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useState, useMemo, useEffect } from 'react';
-import { List, LayoutGrid, Plus, Search, DollarSign, X, Package, RefreshCw, CheckCircle, ImagePlus } from 'lucide-react';import { supabase } from '../../../lib/supabase';
+import { List, LayoutGrid, Plus, Search, DollarSign, X, Package, RefreshCw, CheckCircle, ImagePlus } from 'lucide-react';
+import { supabase } from '../../../lib/supabase';
 import { Product, PendingOrder, CartItem, NewProductState } from '../../../types';
 import { NameSuggester } from '../ui/NameSuggester';
 import { uploadImageToR2, generateShortCode } from '../../../lib/utils';
@@ -26,7 +27,6 @@ export function PendingOrdersView({ products, userId, pendingOrders, onRefresh }
   const [payingOrderId, setPayingOrderId] = useState<string | null>(null);
   const [addPaymentAmount, setAddPaymentAmount] = useState<string>('');
 
-  // MEJORA 2: Smart Card View en móviles
   useEffect(() => {
     if (window.innerWidth < 768) {
       setViewMode('grid');
@@ -75,16 +75,20 @@ export function PendingOrdersView({ products, userId, pendingOrders, onRefresh }
   const handleQuickAdd = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!supabase) return;
+    
+    const activeUserId = products.length > 0 ? (products[0] as any).user_id : userId;
+    
     try {
       const { data } = await supabase.from('products').insert([{
-        sku: generateShortCode(),
+        sku: generateShortCode(), // 🔥 Vuelve la generación automática de SKU
         name: newProduct.name, 
         cost: parseFloat(newProduct.cost), 
         price: parseFloat(newProduct.price), 
         stock: parseInt(newProduct.stock), 
         image_url: newProduct.imagePreview,
-        user_id: userId
+        user_id: activeUserId
       }]).select().throwOnError();
+      
       if (data && data.length > 0) {
         const added: Product = { ...data[0], imageUrl: data[0].image_url };
         setCart(prev => [...prev, { product: added, quantity: 1, salePrice: String(added.price || ''), saleCost: String(added.cost || '') }]);
@@ -99,6 +103,7 @@ export function PendingOrdersView({ products, userId, pendingOrders, onRefresh }
     e.preventDefault();
     if (!quickRestockProduct || !supabase) return;
 
+    const activeUserId = products.length > 0 ? (products[0] as any).user_id : userId;
     const qty = parseInt(quickRestockFields.quantity);
     const unitCost = parseFloat(quickRestockFields.unit_cost);
     if (!qty || isNaN(unitCost)) return;
@@ -115,13 +120,12 @@ export function PendingOrdersView({ products, userId, pendingOrders, onRefresh }
         quantity: qty,
         unit_cost: unitCost,
         date: new Date().toISOString(),
-        user_id: userId
+        user_id: activeUserId
       }]).throwOnError();
 
       await supabase.from('products').update({
         stock: currentStock + qty,
-        cost: newAvgCost,
-        avg_cost: newAvgCost
+        cost: newAvgCost
       }).eq('id', quickRestockProduct.id).throwOnError();
 
       const updatedProduct = { ...quickRestockProduct, stock: currentStock + qty, cost: newAvgCost, avg_cost: newAvgCost };
@@ -137,6 +141,8 @@ export function PendingOrdersView({ products, userId, pendingOrders, onRefresh }
 
   const handleCreateOrder = async () => {
     if (!cart.length || !supabase) return;
+    
+    const activeUserId = products.length > 0 ? (products[0] as any).user_id : userId;
     
     try {
       const itemsToSave = cart.map(c => ({
@@ -154,7 +160,7 @@ export function PendingOrdersView({ products, userId, pendingOrders, onRefresh }
         amount_paid: parseFloat(orderPaid || '0'),
         is_delivered: isDelivered,
         date: new Date().toISOString(),
-        user_id: userId
+        user_id: activeUserId
       }]).throwOnError();
 
       for (const item of cart) {
@@ -196,6 +202,9 @@ export function PendingOrdersView({ products, userId, pendingOrders, onRefresh }
 
   const handleCompleteOrder = async (order: PendingOrder) => {
     if (!supabase) return;
+    
+    const activeUserId = products.length > 0 ? (products[0] as any).user_id : userId;
+    
     try {
       const saleDate = new Date().toISOString(); 
       for (const item of order.items) {
@@ -205,8 +214,8 @@ export function PendingOrdersView({ products, userId, pendingOrders, onRefresh }
           cost_at_sale: item.cost_at_sale, 
           quantity: item.quantity,
           date: saleDate,
-          user_id: userId,
-          client_name: order.client_name || 'Cliente Anónimo'
+          client_name: order.client_name || 'Cliente Anónimo',
+          user_id: activeUserId
         }]).throwOnError();
       }
 
@@ -275,14 +284,12 @@ export function PendingOrdersView({ products, userId, pendingOrders, onRefresh }
               </div>
               <div className="md:col-span-5">
                 <label className="block text-sm font-medium text-[#71717A] mb-2">Fotografía del Producto (Opcional)</label>
-                {/* MEJORA 3: Dropzone Fat-Finger */}
                 <label className="flex flex-col md:flex-row items-center justify-center md:justify-start gap-3 w-full px-4 py-3 min-h-[120px] md:min-h-0 text-center md:text-left bg-[#F9FAFA] border-2 border-dashed border-[#EAEAEC] rounded-[1.25rem] hover:border-[#C8F169] hover:bg-[#E8F8B6]/10 transition-all cursor-pointer text-[#71717A] text-sm font-medium" onDragOver={e => e.preventDefault()} onDrop={async e => { e.preventDefault(); const file = e.dataTransfer.files?.[0]; if (file && file.type.startsWith('image/')) { try { const url = await uploadImageToR2(file); setNewProduct({...newProduct, imagePreview: url}); } catch(err){console.error(err);} }}}>
                   <ImagePlus size={24} className="md:w-4 md:h-4" />
                   <span>{newProduct.imagePreview ? '✓ Imagen lista — clic para cambiar o arrastra otra' : 'Clic para seleccionar o arrastra una imagen aquí'}</span>
                   <input type="file" accept="image/*" onChange={handleImageChange} className="hidden" />
                 </label>
               </div>
-              {/* MEJORA 4: Sticky Bottom Actions */}
               <div className="md:col-span-5 flex flex-col sm:flex-row justify-end mt-4 pt-4 md:pt-6 border-t border-[#EAEAEC]/60 gap-3 sticky bottom-0 bg-white p-4 -mx-4 -mb-4 md:m-0 md:p-0 md:static z-20 shadow-[0_-10px_20px_rgba(0,0,0,0.05)] md:shadow-none">
                 <button type="button" onClick={() => setShowQuickAdd(false)} className="w-full sm:w-auto px-6 py-3 text-[#71717A] hover:text-[#111111] bg-[#F4F5F4] hover:bg-[#EAEAEC] rounded-[1.25rem] font-medium transition-colors touch-manipulation">Cancelar</button>
                 <button type="submit" className="w-full sm:w-auto bg-[#1A1A1A] hover:bg-black text-white px-8 py-3 rounded-[1.25rem] transition-all font-medium shadow-md shadow-black/10 active:scale-95 touch-manipulation">Guardar y Continuar</button>
@@ -344,7 +351,6 @@ export function PendingOrdersView({ products, userId, pendingOrders, onRefresh }
                       </div>
                     </div>
 
-                    {/* MEJORA 4: Sticky Bottom Actions en celular */}
                     <div className="flex flex-col sm:flex-row justify-end gap-3 mt-2 sticky bottom-0 bg-[#F9FAFA] p-4 -mx-4 -mb-4 md:m-0 md:p-0 md:bg-transparent z-20 shadow-[0_-10px_20px_rgba(0,0,0,0.05)] md:shadow-none border-t border-[#EAEAEC] md:border-transparent">
                       <button type="button" onClick={() => {setCart([]); setShowAdd(false);}} className="w-full sm:w-auto px-6 py-3 text-[#71717A] bg-white border border-[#EAEAEC] hover:bg-[#F4F5F4] rounded-[1.25rem] font-medium transition-colors">Cancelar</button>
                       <button type="button" onClick={() => handleCreateOrder()} disabled={cart.some(c => !c.salePrice || parseFloat(c.salePrice) <= 0)} className="w-full sm:w-auto bg-[#1A1A1A] hover:bg-black text-white px-8 py-3 rounded-[1.25rem] transition-all font-medium active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed shadow-md">Guardar Pedido Pendiente</button>

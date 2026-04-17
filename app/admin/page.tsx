@@ -117,7 +117,6 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#F4F5F4] text-[#111111] font-sans flex flex-col md:flex-row">
-      {/* MEJORA 1: Navegación horizontal en móviles, pegajosa arriba (sticky top-0) */}
       <aside className="w-full md:w-64 bg-[#F4F5F4] text-[#71717A] flex-shrink-0 flex flex-col border-b md:border-b-0 md:border-r border-[#EAEAEC] sticky top-0 z-30 shadow-sm md:shadow-none">
         <div className="p-4 md:p-6 flex justify-between items-center">
           <h1 className="text-xl md:text-2xl font-bold tracking-tighter text-[#111111] flex items-center gap-2">
@@ -157,7 +156,6 @@ function NavButton({ active, onClick, icon, label }: { active: boolean; onClick:
   return (
     <button 
       onClick={onClick} 
-      // MEJORA 1b: flex-shrink-0 y whitespace-nowrap para que no se aplasten en celular
       className={`w-auto md:w-full flex-shrink-0 whitespace-nowrap flex items-center space-x-3 px-4 py-3.5 rounded-[1.25rem] transition-all duration-200 ${
         active 
           ? 'bg-[#1A1A1A] text-white shadow-lg font-medium' 

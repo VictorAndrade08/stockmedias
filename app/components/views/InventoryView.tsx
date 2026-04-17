@@ -31,7 +31,6 @@ export function InventoryView({ products, userId, sales, restocks, onRefresh }: 
 
   const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'nameAsc' | 'nameDesc'>('newest');
 
-  // MEJORA 2: Smart Card View en móviles
   useEffect(() => {
     if (window.innerWidth < 768) {
       setViewMode('grid');
@@ -90,7 +89,10 @@ export function InventoryView({ products, userId, sales, restocks, onRefresh }: 
   const handleAdd = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!supabase) return;
+    
+    const activeUserId = products.length > 0 ? (products[0] as any).user_id : userId;
     const existingProduct = products.find(p => p.name.toLowerCase().trim() === newProduct.name.toLowerCase().trim());
+    
     try {
       if (existingProduct) {
         await supabase.from('products').update({ 
@@ -100,13 +102,13 @@ export function InventoryView({ products, userId, sales, restocks, onRefresh }: 
         }).eq('id', existingProduct.id).throwOnError();
       } else {
         await supabase.from('products').insert([{ 
-          sku: generateShortCode(),
+          sku: generateShortCode(), // 🔥 Vuelve la generación automática de SKU
           name: newProduct.name, 
           cost: parseFloat(newProduct.cost), 
           price: parseFloat(newProduct.price), 
           stock: parseInt(newProduct.stock), 
           image_url: newProduct.imagePreview,
-          user_id: userId 
+          user_id: activeUserId
         }]).throwOnError();
       }
       setNewProduct({ name: '', cost: '', price: '', stock: '', imagePreview: null }); setShowAdd(false); onRefresh();
@@ -142,17 +144,27 @@ export function InventoryView({ products, userId, sales, restocks, onRefresh }: 
   const handleRestock = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!detailProduct || !supabase) return;
+    
+    const activeUserId = products.length > 0 ? (products[0] as any).user_id : userId;
     const qty = parseInt(restockFields.quantity);
     const unitCost = parseFloat(restockFields.unit_cost);
+    
     try {
       const currentStock = detailProduct.stock;
       const currentCost = detailProduct.avg_cost ?? detailProduct.cost;
       const newAvgCost = currentStock + qty > 0
         ? ((currentStock * currentCost) + (qty * unitCost)) / (currentStock + qty)
         : unitCost;
-      await supabase.from('restocks').insert([{ product_id: detailProduct.id, quantity: qty, unit_cost: unitCost, date: new Date().toISOString(), user_id: userId }]).throwOnError();
       
-      await supabase.from('products').update({ stock: currentStock + qty, cost: newAvgCost, avg_cost: newAvgCost }).eq('id', detailProduct.id).throwOnError();
+      await supabase.from('restocks').insert([{ 
+        product_id: detailProduct.id, 
+        quantity: qty, 
+        unit_cost: unitCost, 
+        date: new Date().toISOString(),
+        user_id: activeUserId 
+      }]).throwOnError();
+      
+      await supabase.from('products').update({ stock: currentStock + qty, cost: newAvgCost }).eq('id', detailProduct.id).throwOnError();
       
       setDetailProduct({ ...detailProduct, stock: currentStock + qty, cost: newAvgCost, avg_cost: newAvgCost });
       setRestockFields({ quantity: '', unit_cost: '' });
@@ -244,7 +256,7 @@ export function InventoryView({ products, userId, sales, restocks, onRefresh }: 
         const totalQty = allRestocks.reduce((s: number, r: Restock) => s + r.quantity, 0);
         const totalCost = allRestocks.reduce((s: number, r: Restock) => s + r.quantity * r.unit_cost, 0);
         const newAvg = totalQty > 0 ? totalCost / totalQty : unitCost;
-        await supabase.from('products').update({ avg_cost: newAvg, cost: newAvg, stock: totalQty }).eq('id', detailProduct.id).throwOnError();
+        await supabase.from('products').update({ cost: newAvg, stock: totalQty }).eq('id', detailProduct.id).throwOnError();
         setDetailProduct({ ...detailProduct, avg_cost: newAvg, cost: newAvg, stock: totalQty });
       }
       setEditingRestockId(null);
@@ -262,7 +274,7 @@ export function InventoryView({ products, userId, sales, restocks, onRefresh }: 
       const totalQty = remaining.reduce((s, r) => s + r.quantity, 0);
       const totalCost = remaining.reduce((s, r) => s + r.quantity * r.unit_cost, 0);
       const newAvg = totalQty > 0 ? totalCost / totalQty : detailProduct.cost;
-      await supabase.from('products').update({ stock: newStock, avg_cost: newAvg, cost: newAvg }).eq('id', detailProduct.id).throwOnError();
+      await supabase.from('products').update({ stock: newStock, cost: newAvg }).eq('id', detailProduct.id).throwOnError();
       setDetailProduct({ ...detailProduct, stock: newStock, avg_cost: newAvg, cost: newAvg });
       setConfirmDeleteRestockId(null);
       onRefresh();
@@ -325,7 +337,6 @@ export function InventoryView({ products, userId, sales, restocks, onRefresh }: 
           
           <div className="md:col-span-5">
             <label className="block text-sm font-medium text-[#71717A] mb-2">Fotografía del Producto (Opcional)</label>
-            {/* MEJORA 3: Dropzone Fat-Finger (min-h-[120px] en móvil) y flex-col */}
             <label className="flex flex-col md:flex-row items-center justify-center md:justify-start gap-3 w-full px-4 py-3 min-h-[120px] md:min-h-0 text-center md:text-left bg-[#F9FAFA] border-2 border-dashed border-[#EAEAEC] rounded-[1.25rem] hover:border-[#C8F169] hover:bg-[#E8F8B6]/10 transition-all cursor-pointer text-[#71717A] text-sm font-medium" onDragOver={e => e.preventDefault()} onDrop={async e => { e.preventDefault(); const file = e.dataTransfer.files?.[0]; if (file && file.type.startsWith('image/')) { try { const url = await uploadImageToR2(file); setNewProduct({...newProduct, imagePreview: url}); } catch(err){console.error(err);} }}}>
               <ImagePlus size={24} className="md:w-4 md:h-4" />
               <span>{newProduct.imagePreview ? '✓ Imagen lista — clic para cambiar o arrastra otra' : 'Clic para seleccionar o arrastra una imagen aquí'}</span>
@@ -333,7 +344,6 @@ export function InventoryView({ products, userId, sales, restocks, onRefresh }: 
             </label>
           </div>
           
-          {/* MEJORA 4: Sticky Bottom Form Actions (Anti-Teclado en móviles) */}
           <div className="md:col-span-5 flex flex-col sm:flex-row justify-end mt-4 pt-4 md:pt-6 border-t border-[#EAEAEC]/60 gap-3 sticky bottom-0 bg-white p-4 -mx-4 -mb-4 md:m-0 md:p-0 md:static z-20 shadow-[0_-10px_20px_rgba(0,0,0,0.05)] md:shadow-none">
             <button type="button" onClick={() => setShowAdd(false)} className="w-full sm:w-auto px-6 py-3 sm:py-3 text-[#71717A] hover:text-[#111111] bg-[#F4F5F4] hover:bg-[#EAEAEC] rounded-[1.25rem] font-medium transition-colors touch-manipulation">Cancelar</button>
             <button type="submit" className="w-full sm:w-auto bg-[#1A1A1A] hover:bg-black text-white px-8 py-3 sm:py-3 rounded-[1.25rem] transition-all font-medium shadow-md shadow-black/10 active:scale-95 touch-manipulation">Guardar Producto</button>

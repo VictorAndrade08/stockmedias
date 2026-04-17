@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useState, useMemo } from 'react';
-import { Search, DollarSign, Trash2, Plus, X, RefreshCw, Package, ImagePlus } from 'lucide-react';import { supabase } from '../../../lib/supabase';
+import { Search, DollarSign, Trash2, Plus, X, RefreshCw, Package, ImagePlus } from 'lucide-react';
+import { supabase } from '../../../lib/supabase';
 import { Product, NewProductState, CartItem } from '../../../types';
 import { NameSuggester } from '../ui/NameSuggester';
 import { uploadImageToR2, generateShortCode } from '../../../lib/utils';
@@ -43,6 +44,9 @@ export function RecordSaleView({ products, userId, onRefresh }: { products: Prod
   const handleRecordSale = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!selectedProduct || !salePrice || !saleCost || quantity <= 0 || !supabase) return;
+    
+    const activeUserId = products.length > 0 ? (products[0] as any).user_id : userId;
+    
     try {
       await supabase.from('sales').insert([{
         product_id: selectedProduct.id,
@@ -50,12 +54,14 @@ export function RecordSaleView({ products, userId, onRefresh }: { products: Prod
         cost_at_sale: parseFloat(saleCost), 
         quantity: parseInt(String(quantity)),
         date: new Date().toISOString(),
-        user_id: userId,
-        client_name: clientName.trim() || 'Cliente Anónimo'
+        client_name: clientName.trim() || 'Cliente Anónimo',
+        user_id: activeUserId
       }]).throwOnError();
+      
       await supabase.from('products')
         .update({ stock: selectedProduct.stock - parseInt(String(quantity)) })
         .eq('id', selectedProduct.id).throwOnError();
+        
       setSelectedProduct(null); setSalePrice(''); setQuantity(1); setClientName(''); onRefresh(); setSuccessMsg('¡Venta registrada con éxito!');
       setTimeout(() => setSuccessMsg(''), 3000);
     } catch (err) { console.error(err); alert('Error registrando venta. Revisa la consola.'); }
@@ -73,16 +79,20 @@ export function RecordSaleView({ products, userId, onRefresh }: { products: Prod
   const handleQuickAdd = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!supabase) return;
+    
+    const activeUserId = products.length > 0 ? (products[0] as any).user_id : userId;
+    
     try {
       const { data } = await supabase.from('products').insert([{
-        sku: generateShortCode(),
+        sku: generateShortCode(), // 🔥 Vuelve la generación automática de SKU
         name: newProduct.name, 
         cost: parseFloat(newProduct.cost), 
         price: parseFloat(newProduct.price), 
         stock: parseInt(newProduct.stock), 
         image_url: newProduct.imagePreview,
-        user_id: userId
+        user_id: activeUserId
       }]).select().throwOnError();
+      
       if (data && data.length > 0) {
         const added: Product = { ...data[0], imageUrl: data[0].image_url };
         setCart(prev => [...prev, { product: added, quantity: 1, salePrice: String(added.price || ''), saleCost: String(added.cost || '') }]);
@@ -116,6 +126,9 @@ export function RecordSaleView({ products, userId, onRefresh }: { products: Prod
 
   const handleConfirmCart = async () => {
     if (!cart.length || !supabase) return;
+    
+    const activeUserId = products.length > 0 ? (products[0] as any).user_id : userId;
+    
     try {
       const saleDate = new Date().toISOString();
       for (const item of cart) {
@@ -125,8 +138,8 @@ export function RecordSaleView({ products, userId, onRefresh }: { products: Prod
           cost_at_sale: parseFloat(item.saleCost),
           quantity: item.quantity,
           date: saleDate,
-          user_id: userId,
-          client_name: clientName.trim() || 'Cliente Anónimo'
+          client_name: clientName.trim() || 'Cliente Anónimo',
+          user_id: activeUserId
         }]).throwOnError();
         await supabase.from('products')
           .update({ stock: item.product.stock - item.quantity })
@@ -144,6 +157,7 @@ export function RecordSaleView({ products, userId, onRefresh }: { products: Prod
     e.preventDefault();
     if (!quickRestockProduct || !supabase) return;
 
+    const activeUserId = products.length > 0 ? (products[0] as any).user_id : userId;
     const qty = parseInt(quickRestockFields.quantity);
     const unitCost = parseFloat(quickRestockFields.unit_cost);
     if (!qty || isNaN(unitCost)) return;
@@ -160,13 +174,12 @@ export function RecordSaleView({ products, userId, onRefresh }: { products: Prod
         quantity: qty,
         unit_cost: unitCost,
         date: new Date().toISOString(),
-        user_id: userId
+        user_id: activeUserId
       }]).throwOnError();
 
       await supabase.from('products').update({
         stock: currentStock + qty,
-        cost: newAvgCost,
-        avg_cost: newAvgCost
+        cost: newAvgCost
       }).eq('id', quickRestockProduct.id).throwOnError();
 
       const updatedProduct = { ...quickRestockProduct, stock: currentStock + qty, cost: newAvgCost, avg_cost: newAvgCost };
@@ -212,7 +225,6 @@ export function RecordSaleView({ products, userId, onRefresh }: { products: Prod
             </div>
             <div className="md:col-span-5">
               <label className="block text-sm font-medium text-[#71717A] mb-2">Fotografía del Producto (Opcional)</label>
-              {/* MEJORA 3: Dropzone Fat-Finger (min-h-[120px] en móvil) */}
               <label className="flex flex-col md:flex-row items-center justify-center md:justify-start gap-3 w-full px-4 py-3 min-h-[120px] md:min-h-0 text-center md:text-left bg-[#F9FAFA] border-2 border-dashed border-[#EAEAEC] rounded-[1.25rem] hover:border-[#C8F169] hover:bg-[#E8F8B6]/10 transition-all cursor-pointer text-[#71717A] text-sm font-medium" onDragOver={e => e.preventDefault()} onDrop={async e => { e.preventDefault(); const file = e.dataTransfer.files?.[0]; if (file && file.type.startsWith('image/')) { try { const url = await uploadImageToR2(file); setNewProduct({...newProduct, imagePreview: url}); } catch(err){console.error(err);} }}}>
                 <ImagePlus size={24} className="md:w-4 md:h-4" />
                 <span>{newProduct.imagePreview ? '✓ Imagen lista — clic para cambiar o arrastra otra' : 'Clic para seleccionar o arrastra una imagen aquí'}</span>
@@ -220,7 +232,6 @@ export function RecordSaleView({ products, userId, onRefresh }: { products: Prod
               </label>
             </div>
             
-            {/* MEJORA 4: Sticky Bottom Form Actions (Anti-Teclado en móviles) */}
             <div className="md:col-span-5 flex flex-col sm:flex-row justify-end mt-4 pt-4 md:pt-6 border-t border-[#EAEAEC]/60 gap-3 sticky bottom-0 bg-white p-4 -mx-4 -mb-4 md:m-0 md:p-0 md:static z-20 shadow-[0_-10px_20px_rgba(0,0,0,0.05)] md:shadow-none">
               <button type="button" onClick={() => setShowQuickAdd(false)} className="w-full sm:w-auto px-6 py-3 sm:py-3 text-[#71717A] hover:text-[#111111] bg-[#F4F5F4] hover:bg-[#EAEAEC] rounded-[1.25rem] font-medium transition-colors touch-manipulation">Cancelar</button>
               <button type="submit" className="w-full sm:w-auto bg-[#1A1A1A] hover:bg-black text-white px-8 py-3 sm:py-3 rounded-[1.25rem] transition-all font-medium shadow-md shadow-black/10 active:scale-95 touch-manipulation">Guardar y Continuar</button>
@@ -272,7 +283,6 @@ export function RecordSaleView({ products, userId, onRefresh }: { products: Prod
                   <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
                     <input type="text" placeholder="Cliente (Opcional)" value={clientName} onChange={e => setClientName(e.target.value)} className="w-full sm:w-auto px-4 py-3 bg-white border border-[#EAEAEC] rounded-[1.25rem] focus:ring-2 focus:ring-[#C8F169] focus:border-[#C8F169] outline-none text-sm transition-all shadow-[inset_0_2px_4px_rgba(0,0,0,0.02)]" />
                     
-                    {/* MEJORA 4: Sticky Bottom Action para botón final de venta */}
                     <div className="sticky bottom-4 z-20 md:static">
                       <button type="button" onClick={handleConfirmCart} disabled={cart.some(c => !c.salePrice || parseFloat(c.salePrice) <= 0)} className="w-full sm:w-auto bg-[#1A1A1A] hover:bg-black text-white px-8 py-3 rounded-[1.25rem] font-medium transition-all shadow-xl md:shadow-md shadow-black/10 active:scale-95 touch-manipulation disabled:bg-[#F4F5F4] disabled:text-[#A1A1AA] disabled:cursor-not-allowed">Confirmar Venta{cart.length > 1 ? ` (${cart.length})` : ''}</button>
                     </div>
@@ -363,7 +373,6 @@ export function RecordSaleView({ products, userId, onRefresh }: { products: Prod
               </div>
             )}
             
-            {/* MEJORA 4: Sticky Bottom Action para confirmación individual */}
             <div className="sticky bottom-4 z-20 md:static">
               <button type="submit" disabled={selectedProduct.stock < quantity} className="w-full bg-[#1A1A1A] text-white font-medium py-4 px-4 rounded-[1.25rem] hover:bg-black transition-all disabled:bg-[#F4F5F4] disabled:text-[#A1A1AA] disabled:border border-[#EAEAEC] disabled:cursor-not-allowed shadow-xl md:shadow-md shadow-black/10 active:scale-[0.98] touch-manipulation text-base md:text-lg">
                 {selectedProduct.stock < quantity ? 'Stock Insuficiente' : 'Confirmar Venta'}
