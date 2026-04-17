@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useState } from 'react';
+// Se agregó useMemo para el ordenamiento instantáneo
+import React, { useState, useMemo } from 'react';
 import { List, LayoutGrid, Plus, Search, Package, Trash2, Pencil, X, RefreshCw, ImagePlus, ZoomIn, DollarSign } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
 import { Product, Sale, Restock, NewProductState } from '../../../types';
@@ -27,8 +28,33 @@ export function InventoryView({ products, userId, sales, restocks, onRefresh }: 
   const [imageSuccess, setImageSuccess] = useState<string>('');
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const [isDraggingEdit, setIsDraggingEdit] = useState<boolean>(false);
-
   const [quickDeleteId, setQuickDeleteId] = useState<string | null>(null);
+
+  // --- NUEVO ESTADO DE ORDENAMIENTO (Por defecto: más recientes) ---
+  const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'nameAsc' | 'nameDesc'>('newest');
+
+  // --- LÓGICA DE ORDENAMIENTO INSTANTÁNEO ---
+  const sortedProducts = useMemo(() => {
+    return [...products].sort((a, b) => {
+      if (sortBy === 'newest') {
+        const dateA = new Date((a as any).created_at || 0).getTime();
+        const dateB = new Date((b as any).created_at || 0).getTime();
+        return dateB - dateA;
+      }
+      if (sortBy === 'oldest') {
+        const dateA = new Date((a as any).created_at || 0).getTime();
+        const dateB = new Date((b as any).created_at || 0).getTime();
+        return dateA - dateB;
+      }
+      if (sortBy === 'nameAsc') {
+        return a.name.localeCompare(b.name);
+      }
+      if (sortBy === 'nameDesc') {
+        return b.name.localeCompare(a.name);
+      }
+      return 0;
+    });
+  }, [products, sortBy]);
 
   const handleQuickDeleteProduct = async (product: Product) => {
     if (!supabase) return;
@@ -38,7 +64,6 @@ export function InventoryView({ products, userId, sales, restocks, onRefresh }: 
       }
       await supabase.from('sales').delete().eq('product_id', product.id).throwOnError();
       await supabase.from('restocks').delete().eq('product_id', product.id).throwOnError();
-      // FIX: Eliminamos el chequeo de usuario para que no falle en silencio
       await supabase.from('products').delete().eq('id', product.id).throwOnError();
       
       setQuickDeleteId(null);
@@ -102,7 +127,6 @@ export function InventoryView({ products, userId, sales, restocks, onRefresh }: 
     e.preventDefault();
     if (!detailProduct || !supabase || !editName.trim()) return;
     try {
-      // FIX: Eliminamos el chequeo de usuario para que guarde de verdad en la base
       await supabase.from('products').update({ name: editName.trim() }).eq('id', detailProduct.id).throwOnError();
       setDetailProduct({ ...detailProduct, name: editName.trim() });
       setEditNameSuccess('¡Nombre actualizado!');
@@ -259,6 +283,24 @@ export function InventoryView({ products, userId, sales, restocks, onRefresh }: 
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <h2 className="text-[1.75rem] font-medium text-[#111111] tracking-tight">Inventario de Productos</h2>
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 w-full sm:w-auto">
+          
+          {/* --- SELECTOR DE ORDENAMIENTO (Integrado al diseño original) --- */}
+          <div className="relative">
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value as any)}
+              className="appearance-none bg-[#F9FAFA] border border-[#EAEAEC] text-[#71717A] text-sm font-medium pl-4 pr-8 py-3 rounded-[1rem] focus:ring-2 focus:ring-[#C8F169] focus:border-[#C8F169] outline-none transition-all cursor-pointer shadow-[inset_0_2px_4px_rgba(0,0,0,0.02)]"
+            >
+              <option value="newest">Últimos subidos</option>
+              <option value="oldest">Más antiguos</option>
+              <option value="nameAsc">Nombre (A-Z)</option>
+              <option value="nameDesc">Nombre (Z-A)</option>
+            </select>
+            <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-[#A1A1AA]">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+            </div>
+          </div>
+
           <div className="flex bg-[#F9FAFA] border border-[#EAEAEC] rounded-[1rem] p-1 flex-shrink-0">
             <button onClick={() => setViewMode('list')} className={`p-2 rounded-[0.75rem] transition-all touch-manipulation ${viewMode === 'list' ? 'bg-white shadow-sm border border-[#EAEAEC] text-[#111111]' : 'text-[#A1A1AA] hover:text-[#111111]'}`}><List size={18} /></button>
             <button onClick={() => setViewMode('grid')} className={`p-2 rounded-[0.75rem] transition-all touch-manipulation ${viewMode === 'grid' ? 'bg-white shadow-sm border border-[#EAEAEC] text-[#111111]' : 'text-[#A1A1AA] hover:text-[#111111]'}`}><LayoutGrid size={18} /></button>
@@ -282,11 +324,12 @@ export function InventoryView({ products, userId, sales, restocks, onRefresh }: 
         </form>
       )}
 
-      {products.length === 0 ? (
+      {/* Usamos sortedProducts en lugar de products para mostrar los resultados */}
+      {sortedProducts.length === 0 ? (
         <div className="col-span-full text-center py-10 text-[#71717A] font-medium">Tu inventario está vacío. ¡Agrega tu primer producto!</div>
       ) : viewMode === 'grid' ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6 w-full animate-in fade-in">
-          {products.map(product => (
+          {sortedProducts.map(product => (
             <div key={product.id} onClick={() => handleOpenDetail(product)} className="bg-white p-5 rounded-[2rem] shadow-[0_4px_24px_rgba(0,0,0,0.02)] border border-[#EAEAEC] hover:shadow-[0_8px_30px_rgb(0,0,0,0.06)] transition-all duration-300 flex flex-col h-full cursor-pointer active:scale-[0.98]">
               <div className="flex justify-between items-start mb-5 gap-2">
                 <div className="flex-1">
@@ -329,7 +372,8 @@ export function InventoryView({ products, userId, sales, restocks, onRefresh }: 
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#EAEAEC]/60">
-                {products.map(product => (
+                {/* Usamos sortedProducts en la tabla también */}
+                {sortedProducts.map(product => (
                   <tr key={product.id} className="hover:bg-[#F9FAFA] transition-colors cursor-pointer group" onClick={() => handleOpenDetail(product)}>
                     <td className="px-4 md:px-6 py-3 md:py-4" onClick={(e) => e.stopPropagation()}>
                       <div
