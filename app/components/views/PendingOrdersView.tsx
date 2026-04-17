@@ -76,17 +76,14 @@ export function PendingOrdersView({ products, userId, pendingOrders, onRefresh }
     e.preventDefault();
     if (!supabase) return;
     
-    const activeUserId = products.length > 0 ? (products[0] as any).user_id : userId;
-    
     try {
       const { data } = await supabase.from('products').insert([{
-        sku: generateShortCode(), // 🔥 Vuelve la generación automática de SKU
+        sku: generateShortCode(), // 🔥 Código SKU Automático
         name: newProduct.name, 
         cost: parseFloat(newProduct.cost), 
         price: parseFloat(newProduct.price), 
         stock: parseInt(newProduct.stock), 
-        image_url: newProduct.imagePreview,
-        user_id: activeUserId
+        image_url: newProduct.imagePreview
       }]).select().throwOnError();
       
       if (data && data.length > 0) {
@@ -103,7 +100,6 @@ export function PendingOrdersView({ products, userId, pendingOrders, onRefresh }
     e.preventDefault();
     if (!quickRestockProduct || !supabase) return;
 
-    const activeUserId = products.length > 0 ? (products[0] as any).user_id : userId;
     const qty = parseInt(quickRestockFields.quantity);
     const unitCost = parseFloat(quickRestockFields.unit_cost);
     if (!qty || isNaN(unitCost)) return;
@@ -119,8 +115,7 @@ export function PendingOrdersView({ products, userId, pendingOrders, onRefresh }
         product_id: quickRestockProduct.id,
         quantity: qty,
         unit_cost: unitCost,
-        date: new Date().toISOString(),
-        user_id: activeUserId
+        date: new Date().toISOString()
       }]).throwOnError();
 
       await supabase.from('products').update({
@@ -142,8 +137,6 @@ export function PendingOrdersView({ products, userId, pendingOrders, onRefresh }
   const handleCreateOrder = async () => {
     if (!cart.length || !supabase) return;
     
-    const activeUserId = products.length > 0 ? (products[0] as any).user_id : userId;
-    
     try {
       const itemsToSave = cart.map(c => ({
         product_id: c.product.id,
@@ -159,8 +152,7 @@ export function PendingOrdersView({ products, userId, pendingOrders, onRefresh }
         total_price: cartTotal,
         amount_paid: parseFloat(orderPaid || '0'),
         is_delivered: isDelivered,
-        date: new Date().toISOString(),
-        user_id: activeUserId
+        date: new Date().toISOString()
       }]).throwOnError();
 
       for (const item of cart) {
@@ -203,8 +195,6 @@ export function PendingOrdersView({ products, userId, pendingOrders, onRefresh }
   const handleCompleteOrder = async (order: PendingOrder) => {
     if (!supabase) return;
     
-    const activeUserId = products.length > 0 ? (products[0] as any).user_id : userId;
-    
     try {
       const saleDate = new Date().toISOString(); 
       for (const item of order.items) {
@@ -214,8 +204,7 @@ export function PendingOrdersView({ products, userId, pendingOrders, onRefresh }
           cost_at_sale: item.cost_at_sale, 
           quantity: item.quantity,
           date: saleDate,
-          client_name: order.client_name || 'Cliente Anónimo',
-          user_id: activeUserId
+          client_name: order.client_name || 'Cliente Anónimo'
         }]).throwOnError();
       }
 

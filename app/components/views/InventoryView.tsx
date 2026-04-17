@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useMemo, useEffect } from 'react';
-import { List, LayoutGrid, Plus, Search, Package, Trash2, Pencil, X, RefreshCw, ImagePlus, ZoomIn, DollarSign } from 'lucide-react';
+import { List, LayoutGrid, Plus, Search, Package, Trash2, Pencil, X, RefreshCw, ImagePlus, ZoomIn, DollarSign, Sparkles } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
 import { Product, Sale, Restock, NewProductState } from '../../../types';
 import { NameSuggester } from '../ui/NameSuggester';
@@ -28,6 +28,9 @@ export function InventoryView({ products, userId, sales, restocks, onRefresh }: 
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const [isDraggingEdit, setIsDraggingEdit] = useState<boolean>(false);
   const [quickDeleteId, setQuickDeleteId] = useState<string | null>(null);
+
+  const [isEnhancing, setIsEnhancing] = useState<boolean>(false);
+  const [enhancedImagePreview, setEnhancedImagePreview] = useState<string | null>(null);
 
   const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'nameAsc' | 'nameDesc'>('newest');
 
@@ -102,7 +105,7 @@ export function InventoryView({ products, userId, sales, restocks, onRefresh }: 
         }).eq('id', existingProduct.id).throwOnError();
       } else {
         await supabase.from('products').insert([{ 
-          sku: generateShortCode(), // 🔥 Vuelve la generación automática de SKU
+          sku: generateShortCode(),
           name: newProduct.name, 
           cost: parseFloat(newProduct.cost), 
           price: parseFloat(newProduct.price), 
@@ -242,6 +245,47 @@ export function InventoryView({ products, userId, sales, restocks, onRefresh }: 
       setTimeout(() => setImageSuccess(''), 3000);
       onRefresh();
     } catch (err) { console.error(err); alert("Error eliminando imagen"); }
+  };
+
+  const handlePreviewEnhanceImage = async () => {
+    if (!detailProduct || !detailProduct.imageUrl) return;
+    setIsEnhancing(true);
+    setImageSuccess('');
+    try {
+      const res = await fetch('/api/enhance-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ imageUrl: detailProduct.imageUrl, productName: detailProduct.name })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Error en la API de AI');
+
+      setEnhancedImagePreview(`data:image/jpeg;base64,${data.base64}`);
+    } catch (err: any) {
+      console.error(err);
+      alert("Error procesando imagen: " + err.message);
+    } finally {
+      setIsEnhancing(false);
+    }
+  };
+
+  const handleConfirmEnhancement = async () => {
+    if (!enhancedImagePreview) return;
+    setIsEnhancing(true); 
+    try {
+      const resBlob = await fetch(enhancedImagePreview);
+      const blob = await resBlob.blob();
+      const file = new File([blob], `ai-hd-${detailProduct?.sku || Date.now()}.jpg`, { type: 'image/jpeg' });
+      await uploadAndSaveImage(file);
+      
+      setEnhancedImagePreview(null);
+      setImageSuccess('✨ ¡Calidad HD guardada con éxito!');
+      setTimeout(() => setImageSuccess(''), 4000);
+    } catch (err: any) {
+      alert("Error al guardar: " + err.message);
+    } finally {
+      setIsEnhancing(false);
+    }
   };
 
   const handleSaveRestock = async (restockId: string) => {
@@ -646,6 +690,11 @@ export function InventoryView({ products, userId, sales, restocks, onRefresh }: 
                   {detailProduct.imageUrl && !editImagePreview && (
                     <button type="button" onClick={handleRemoveImage} className="flex items-center justify-center sm:justify-start gap-2 text-red-500 hover:text-red-700 bg-red-50 hover:bg-red-100 border border-red-100 px-4 py-2.5 rounded-[1rem] text-sm font-medium transition-colors touch-manipulation w-full sm:w-auto"><Trash2 size={14} /><span>Eliminar imagen</span></button>
                   )}
+                  {detailProduct.imageUrl && (
+                    <button type="button" onClick={handlePreviewEnhanceImage} disabled={isEnhancing} className="flex items-center justify-center sm:justify-start gap-2 text-[#4A6310] hover:text-[#3a4d0c] bg-[#E8F8B6]/50 hover:bg-[#E8F8B6] border border-[#C8F169]/40 px-4 py-2.5 rounded-[1rem] text-sm font-medium transition-colors touch-manipulation w-full sm:w-auto disabled:opacity-50">
+                      {isEnhancing ? <><RefreshCw size={14} className="animate-spin" /><span>Generando preview...</span></> : <><Sparkles size={14} /><span>Mejorar calidad con AI</span></>}
+                    </button>
+                  )}
                   {imageSuccess && <p className="text-sm font-medium text-[#4A6310]">{imageSuccess}</p>}
                 </div>
               </div>
@@ -669,8 +718,52 @@ export function InventoryView({ products, userId, sales, restocks, onRefresh }: 
         </div>
       )}
 
+      {/* 🔥 MODAL "ESPEJO MÁGICO" */}
+      {enhancedImagePreview && detailProduct && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in" onClick={() => setEnhancedImagePreview(null)}>
+          <div className="bg-white rounded-[2rem] shadow-[0_24px_60px_rgba(0,0,0,0.12)] border border-[#EAEAEC] w-full max-w-3xl overflow-hidden animate-in zoom-in-95" onClick={e => e.stopPropagation()}>
+            <div className="p-6 border-b border-[#EAEAEC] flex justify-between items-center">
+              <h3 className="text-xl font-medium text-[#111111] tracking-tight">Validar Mejora de Imagen</h3>
+              <button onClick={() => setEnhancedImagePreview(null)} className="p-2 rounded-[0.75rem] text-[#A1A1AA] hover:text-[#111111] hover:bg-[#EAEAEC] transition-colors touch-manipulation flex-shrink-0"><X size={18} /></button>
+            </div>
+            
+            <div className="p-6 flex flex-col sm:flex-row gap-6">
+              {/* Imagen Original - Ahora con zoom */}
+              <div className="flex-1 flex flex-col items-center gap-3">
+                <span className="text-xs font-bold uppercase tracking-widest text-[#71717A]">Antes (Original)</span>
+                <div 
+                  className="w-full h-64 bg-[#F9FAFA] rounded-[1.25rem] border border-[#EAEAEC] flex items-center justify-center overflow-hidden cursor-zoom-in"
+                  onClick={() => setLightboxUrl(detailProduct.imageUrl!)}
+                >
+                  <img src={detailProduct.imageUrl!} className="max-w-full max-h-full object-contain" alt="Original" />
+                </div>
+              </div>
+              
+              {/* Imagen Mejorada - Ahora con zoom */}
+              <div className="flex-1 flex flex-col items-center gap-3">
+                <span className="text-xs font-bold uppercase tracking-widest text-[#4A6310] bg-[#E8F8B6]/50 px-3 py-1 rounded-full flex items-center gap-1"><Sparkles size={12}/> Después (AI HD)</span>
+                <div 
+                  className="w-full h-64 bg-white rounded-[1.25rem] border-2 border-[#C8F169] flex items-center justify-center overflow-hidden shadow-[0_8px_30px_rgb(200,241,105,0.2)] cursor-zoom-in"
+                  onClick={() => setLightboxUrl(enhancedImagePreview)}
+                >
+                  <img src={enhancedImagePreview} className="max-w-full max-h-full object-contain" alt="Mejorada" />
+                </div>
+              </div>
+            </div>
+
+            <div className="p-6 bg-[#F9FAFA] border-t border-[#EAEAEC] flex flex-col sm:flex-row justify-end gap-3">
+              <button onClick={() => setEnhancedImagePreview(null)} className="w-full sm:w-auto px-6 py-3 text-[#71717A] hover:text-[#111111] bg-white border border-[#EAEAEC] hover:bg-[#F4F5F4] rounded-[1.25rem] font-medium transition-colors touch-manipulation">Descartar</button>
+              <button onClick={handleConfirmEnhancement} disabled={isEnhancing} className="w-full sm:w-auto bg-[#1A1A1A] hover:bg-black text-white px-8 py-3 rounded-[1.25rem] transition-all font-medium shadow-md shadow-black/10 active:scale-95 touch-manipulation disabled:opacity-50 flex items-center justify-center gap-2">
+                {isEnhancing ? <><RefreshCw size={16} className="animate-spin" /><span>Guardando...</span></> : <span>Confirmar y Reemplazar</span>}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 🔥 LIGHTBOX ACTUALIZADO A z-[80] PARA VERSE POR ENCIMA DEL ESPEJO MÁGICO */}
       {lightboxUrl && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-sm animate-in fade-in" onClick={() => setLightboxUrl(null)}>
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/80 backdrop-blur-sm animate-in fade-in" onClick={() => setLightboxUrl(null)}>
           <button className="absolute top-4 right-4 p-2 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors touch-manipulation"><X size={22} /></button>
           <img src={lightboxUrl} alt="Imagen ampliada" className="max-w-[92vw] max-h-[88vh] rounded-[1.5rem] shadow-2xl object-contain animate-in zoom-in-90" onClick={e => e.stopPropagation()} />
         </div>

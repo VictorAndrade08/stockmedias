@@ -45,8 +45,6 @@ export function RecordSaleView({ products, userId, onRefresh }: { products: Prod
     e.preventDefault();
     if (!selectedProduct || !salePrice || !saleCost || quantity <= 0 || !supabase) return;
     
-    const activeUserId = products.length > 0 ? (products[0] as any).user_id : userId;
-    
     try {
       await supabase.from('sales').insert([{
         product_id: selectedProduct.id,
@@ -54,8 +52,7 @@ export function RecordSaleView({ products, userId, onRefresh }: { products: Prod
         cost_at_sale: parseFloat(saleCost), 
         quantity: parseInt(String(quantity)),
         date: new Date().toISOString(),
-        client_name: clientName.trim() || 'Cliente Anónimo',
-        user_id: activeUserId
+        client_name: clientName.trim() || 'Cliente Anónimo'
       }]).throwOnError();
       
       await supabase.from('products')
@@ -80,17 +77,14 @@ export function RecordSaleView({ products, userId, onRefresh }: { products: Prod
     e.preventDefault();
     if (!supabase) return;
     
-    const activeUserId = products.length > 0 ? (products[0] as any).user_id : userId;
-    
     try {
       const { data } = await supabase.from('products').insert([{
-        sku: generateShortCode(), // 🔥 Vuelve la generación automática de SKU
+        sku: generateShortCode(), // 🔥 Código SKU Automático
         name: newProduct.name, 
         cost: parseFloat(newProduct.cost), 
         price: parseFloat(newProduct.price), 
         stock: parseInt(newProduct.stock), 
-        image_url: newProduct.imagePreview,
-        user_id: activeUserId
+        image_url: newProduct.imagePreview
       }]).select().throwOnError();
       
       if (data && data.length > 0) {
@@ -127,8 +121,6 @@ export function RecordSaleView({ products, userId, onRefresh }: { products: Prod
   const handleConfirmCart = async () => {
     if (!cart.length || !supabase) return;
     
-    const activeUserId = products.length > 0 ? (products[0] as any).user_id : userId;
-    
     try {
       const saleDate = new Date().toISOString();
       for (const item of cart) {
@@ -138,8 +130,7 @@ export function RecordSaleView({ products, userId, onRefresh }: { products: Prod
           cost_at_sale: parseFloat(item.saleCost),
           quantity: item.quantity,
           date: saleDate,
-          client_name: clientName.trim() || 'Cliente Anónimo',
-          user_id: activeUserId
+          client_name: clientName.trim() || 'Cliente Anónimo'
         }]).throwOnError();
         await supabase.from('products')
           .update({ stock: item.product.stock - item.quantity })
@@ -157,7 +148,6 @@ export function RecordSaleView({ products, userId, onRefresh }: { products: Prod
     e.preventDefault();
     if (!quickRestockProduct || !supabase) return;
 
-    const activeUserId = products.length > 0 ? (products[0] as any).user_id : userId;
     const qty = parseInt(quickRestockFields.quantity);
     const unitCost = parseFloat(quickRestockFields.unit_cost);
     if (!qty || isNaN(unitCost)) return;
@@ -173,8 +163,7 @@ export function RecordSaleView({ products, userId, onRefresh }: { products: Prod
         product_id: quickRestockProduct.id,
         quantity: qty,
         unit_cost: unitCost,
-        date: new Date().toISOString(),
-        user_id: activeUserId
+        date: new Date().toISOString()
       }]).throwOnError();
 
       await supabase.from('products').update({
