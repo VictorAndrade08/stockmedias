@@ -3,12 +3,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { LayoutDashboard, Package, ShoppingCart, ClipboardList, Lock } from 'lucide-react';
 
-// --- IMPORTACIONES CORREGIDAS DEFINITIVAS ---
-// 2 saltos (../../) porque lib y types están en la raíz del proyecto
 import { supabase } from '../../lib/supabase';
 import { Product, Sale, Restock, PendingOrder } from '../../types';
 
-// 1 salto (../) porque components está dentro de la carpeta app
 import { DashboardView } from '../components/views/DashboardView';
 import { RecordSaleView } from '../components/views/RecordSaleView';
 import { InventoryView } from '../components/views/InventoryView';
@@ -18,8 +15,6 @@ const STORE_ACCESS_PIN = "4321";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<string>('ventas');
-  
-  // --- SOLUCIÓN DE PERSISTENCIA ---
   const [user] = useState<{ id: string }>({ id: '00000000-0000-0000-0000-000000000000' });
   
   const [products, setProducts] = useState<Product[]>([]);
@@ -122,13 +117,14 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#F4F5F4] text-[#111111] font-sans flex flex-col md:flex-row">
-      <aside className="w-full md:w-64 bg-[#F4F5F4] text-[#71717A] flex-shrink-0 flex flex-col border-r border-[#EAEAEC] relative z-20">
-        <div className="p-6">
-          <h1 className="text-2xl font-bold tracking-tighter text-[#111111] flex items-center gap-2">
+      {/* MEJORA 1: Navegación horizontal en móviles, pegajosa arriba (sticky top-0) */}
+      <aside className="w-full md:w-64 bg-[#F4F5F4] text-[#71717A] flex-shrink-0 flex flex-col border-b md:border-b-0 md:border-r border-[#EAEAEC] sticky top-0 z-30 shadow-sm md:shadow-none">
+        <div className="p-4 md:p-6 flex justify-between items-center">
+          <h1 className="text-xl md:text-2xl font-bold tracking-tighter text-[#111111] flex items-center gap-2">
             <Package className="text-[#1A1A1A]" /> SocksManager
           </h1>
         </div>
-        <nav className="flex-1 px-4 space-y-2 pb-6 md:pb-0">
+        <nav className="flex md:flex-col gap-2 px-4 pb-4 md:space-y-2 md:gap-0 md:pb-0 overflow-x-auto" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none', WebkitOverflowScrolling: 'touch' }}>
           <NavButton active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} icon={<LayoutDashboard size={20} />} label="Dashboard" />
           <NavButton active={activeTab === 'ventas'} onClick={() => setActiveTab('ventas')} icon={<ShoppingCart size={20} />} label="Registrar Venta" />
           <NavButton active={activeTab === 'inventario'} onClick={() => setActiveTab('inventario')} icon={<Package size={20} />} label="Inventario" />
@@ -161,7 +157,8 @@ function NavButton({ active, onClick, icon, label }: { active: boolean; onClick:
   return (
     <button 
       onClick={onClick} 
-      className={`w-full flex items-center space-x-3 px-4 py-3.5 rounded-[1.25rem] transition-all duration-200 ${
+      // MEJORA 1b: flex-shrink-0 y whitespace-nowrap para que no se aplasten en celular
+      className={`w-auto md:w-full flex-shrink-0 whitespace-nowrap flex items-center space-x-3 px-4 py-3.5 rounded-[1.25rem] transition-all duration-200 ${
         active 
           ? 'bg-[#1A1A1A] text-white shadow-lg font-medium' 
           : 'text-[#71717A] hover:bg-[#EAEAEC]/60 hover:text-[#111111]'

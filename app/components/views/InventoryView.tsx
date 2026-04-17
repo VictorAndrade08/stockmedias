@@ -1,7 +1,6 @@
 "use client";
 
-// Se agregó useMemo para el ordenamiento instantáneo
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { List, LayoutGrid, Plus, Search, Package, Trash2, Pencil, X, RefreshCw, ImagePlus, ZoomIn, DollarSign } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
 import { Product, Sale, Restock, NewProductState } from '../../../types';
@@ -30,10 +29,15 @@ export function InventoryView({ products, userId, sales, restocks, onRefresh }: 
   const [isDraggingEdit, setIsDraggingEdit] = useState<boolean>(false);
   const [quickDeleteId, setQuickDeleteId] = useState<string | null>(null);
 
-  // --- NUEVO ESTADO DE ORDENAMIENTO (Por defecto: más recientes) ---
   const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'nameAsc' | 'nameDesc'>('newest');
 
-  // --- LÓGICA DE ORDENAMIENTO INSTANTÁNEO ---
+  // MEJORA 2: Smart Card View en móviles
+  useEffect(() => {
+    if (window.innerWidth < 768) {
+      setViewMode('grid');
+    }
+  }, []);
+
   const sortedProducts = useMemo(() => {
     return [...products].sort((a, b) => {
       if (sortBy === 'newest') {
@@ -284,7 +288,6 @@ export function InventoryView({ products, userId, sales, restocks, onRefresh }: 
         <h2 className="text-[1.75rem] font-medium text-[#111111] tracking-tight">Inventario de Productos</h2>
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 w-full sm:w-auto">
           
-          {/* --- SELECTOR DE ORDENAMIENTO (Integrado al diseño original) --- */}
           <div className="relative">
             <select
               value={sortBy}
@@ -319,12 +322,25 @@ export function InventoryView({ products, userId, sales, restocks, onRefresh }: 
           <div><label className="block text-sm font-medium text-[#71717A] mb-2">Costo ($)</label><input type="number" step="0.01" required value={newProduct.cost} onChange={e => setNewProduct({...newProduct, cost: e.target.value})} className="w-full px-4 py-3 bg-[#F9FAFA] border border-[#EAEAEC] rounded-[1.25rem] focus:ring-2 focus:ring-[#C8F169] focus:border-[#C8F169] transition-all outline-none shadow-[inset_0_2px_4px_rgba(0,0,0,0.02)] text-base" placeholder="0.00" /></div>
           <div><label className="block text-sm font-medium text-[#71717A] mb-2">Precio Venta ($)</label><input type="number" step="0.01" required value={newProduct.price} onChange={e => setNewProduct({...newProduct, price: e.target.value})} className="w-full px-4 py-3 bg-[#F9FAFA] border border-[#EAEAEC] rounded-[1.25rem] focus:ring-2 focus:ring-[#C8F169] focus:border-[#C8F169] transition-all outline-none shadow-[inset_0_2px_4px_rgba(0,0,0,0.02)] text-base" placeholder="0.00" /></div>
           <div><label className="block text-sm font-medium text-[#71717A] mb-2">Stock Inicial</label><input type="number" required value={newProduct.stock} onChange={e => setNewProduct({...newProduct, stock: e.target.value})} className="w-full px-4 py-3 bg-[#F9FAFA] border border-[#EAEAEC] rounded-[1.25rem] focus:ring-2 focus:ring-[#C8F169] focus:border-[#C8F169] transition-all outline-none shadow-[inset_0_2px_4px_rgba(0,0,0,0.02)] text-base" placeholder="0" /></div>
-          <div className="md:col-span-5"><label className="block text-sm font-medium text-[#71717A] mb-2">Fotografía del Producto (Opcional)</label><label className="flex items-center gap-3 w-full px-4 py-3 bg-[#F9FAFA] border-2 border-dashed border-[#EAEAEC] rounded-[1.25rem] hover:border-[#C8F169] hover:bg-[#E8F8B6]/10 transition-all cursor-pointer text-[#71717A] text-sm font-medium" onDragOver={e => e.preventDefault()} onDrop={async e => { e.preventDefault(); const file = e.dataTransfer.files?.[0]; if (file && file.type.startsWith('image/')) { try { const url = await uploadImageToR2(file); setNewProduct({...newProduct, imagePreview: url}); } catch(err){console.error(err);} }}}><ImagePlus size={16} /><span>{newProduct.imagePreview ? '✓ Imagen lista — clic para cambiar o arrastra otra' : 'Clic para seleccionar o arrastra una imagen aquí'}</span><input type="file" accept="image/*" onChange={handleImageChange} className="hidden" /></label></div>
-          <div className="md:col-span-5 flex flex-col sm:flex-row justify-end mt-4 pt-6 border-t border-[#EAEAEC]/60 gap-3"><button type="button" onClick={() => setShowAdd(false)} className="w-full sm:w-auto px-6 py-3 sm:py-3 text-[#71717A] hover:text-[#111111] bg-[#F4F5F4] hover:bg-[#EAEAEC] rounded-[1.25rem] font-medium transition-colors touch-manipulation">Cancelar</button><button type="submit" className="w-full sm:w-auto bg-[#1A1A1A] hover:bg-black text-white px-8 py-3 sm:py-3 rounded-[1.25rem] transition-all font-medium shadow-md shadow-black/10 active:scale-95 touch-manipulation">Guardar Producto</button></div>
+          
+          <div className="md:col-span-5">
+            <label className="block text-sm font-medium text-[#71717A] mb-2">Fotografía del Producto (Opcional)</label>
+            {/* MEJORA 3: Dropzone Fat-Finger (min-h-[120px] en móvil) y flex-col */}
+            <label className="flex flex-col md:flex-row items-center justify-center md:justify-start gap-3 w-full px-4 py-3 min-h-[120px] md:min-h-0 text-center md:text-left bg-[#F9FAFA] border-2 border-dashed border-[#EAEAEC] rounded-[1.25rem] hover:border-[#C8F169] hover:bg-[#E8F8B6]/10 transition-all cursor-pointer text-[#71717A] text-sm font-medium" onDragOver={e => e.preventDefault()} onDrop={async e => { e.preventDefault(); const file = e.dataTransfer.files?.[0]; if (file && file.type.startsWith('image/')) { try { const url = await uploadImageToR2(file); setNewProduct({...newProduct, imagePreview: url}); } catch(err){console.error(err);} }}}>
+              <ImagePlus size={24} className="md:w-4 md:h-4" />
+              <span>{newProduct.imagePreview ? '✓ Imagen lista — clic para cambiar o arrastra otra' : 'Clic para seleccionar o arrastra una imagen aquí'}</span>
+              <input type="file" accept="image/*" onChange={handleImageChange} className="hidden" />
+            </label>
+          </div>
+          
+          {/* MEJORA 4: Sticky Bottom Form Actions (Anti-Teclado en móviles) */}
+          <div className="md:col-span-5 flex flex-col sm:flex-row justify-end mt-4 pt-4 md:pt-6 border-t border-[#EAEAEC]/60 gap-3 sticky bottom-0 bg-white p-4 -mx-4 -mb-4 md:m-0 md:p-0 md:static z-20 shadow-[0_-10px_20px_rgba(0,0,0,0.05)] md:shadow-none">
+            <button type="button" onClick={() => setShowAdd(false)} className="w-full sm:w-auto px-6 py-3 sm:py-3 text-[#71717A] hover:text-[#111111] bg-[#F4F5F4] hover:bg-[#EAEAEC] rounded-[1.25rem] font-medium transition-colors touch-manipulation">Cancelar</button>
+            <button type="submit" className="w-full sm:w-auto bg-[#1A1A1A] hover:bg-black text-white px-8 py-3 sm:py-3 rounded-[1.25rem] transition-all font-medium shadow-md shadow-black/10 active:scale-95 touch-manipulation">Guardar Producto</button>
+          </div>
         </form>
       )}
 
-      {/* Usamos sortedProducts en lugar de products para mostrar los resultados */}
       {sortedProducts.length === 0 ? (
         <div className="col-span-full text-center py-10 text-[#71717A] font-medium">Tu inventario está vacío. ¡Agrega tu primer producto!</div>
       ) : viewMode === 'grid' ? (
@@ -372,7 +388,6 @@ export function InventoryView({ products, userId, sales, restocks, onRefresh }: 
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#EAEAEC]/60">
-                {/* Usamos sortedProducts en la tabla también */}
                 {sortedProducts.map(product => (
                   <tr key={product.id} className="hover:bg-[#F9FAFA] transition-colors cursor-pointer group" onClick={() => handleOpenDetail(product)}>
                     <td className="px-4 md:px-6 py-3 md:py-4" onClick={(e) => e.stopPropagation()}>
