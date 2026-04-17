@@ -52,7 +52,7 @@ const normalizeText = (text: string) => {
   return text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 };
 
-export default function TiendaPage() {
+export default function HomePage() {
   const router = useRouter(); 
   
   const [allProducts, setAllProducts] = useState<StoreProduct[]>([]);
@@ -290,7 +290,7 @@ export default function TiendaPage() {
         </div>
       </header>
 
-      {/* --- HERO SECTION CON BÚSQUEDA --- */}
+      {/* --- HERO SECTION --- */}
       <section className="py-10 md:py-20 px-4 md:px-6 text-center max-w-3xl mx-auto flex flex-col items-center">
         <h1 className="text-3xl md:text-[3.5rem] font-black uppercase tracking-tighter mb-3 md:mb-4 text-[#111111]">
           ENCUENTRA TU PAR IDEAL
@@ -419,7 +419,7 @@ export default function TiendaPage() {
         )}
       </main>
 
-      {/* --- FLOATING CHECKOUT BUTTON (MOBILE & DESKTOP / UX 2026) --- */}
+      {/* --- FLOATING CHECKOUT BUTTON --- */}
       {!isCartOpen && cartItemCount > 0 && (
         <div className="fixed bottom-6 md:bottom-8 inset-x-0 z-40 flex justify-center px-4 pointer-events-none animate-in slide-in-from-bottom-8 fade-in duration-300">
           <button 
