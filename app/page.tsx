@@ -470,7 +470,7 @@ export default function HomePage() {
         </div>
       )}
 
-      {/* --- CARRITO (CON 'pb-10' PARA EVITAR CHOQUE CON NAVEGADOR EN MÓVIL) --- */}
+      {/* --- CARRITO --- */}
       {isCartOpen && (
         <div className="fixed inset-0 z-[100] flex justify-end overflow-hidden">
           <div className="absolute inset-0 bg-black/40 backdrop-blur-sm transition-opacity" onClick={() => setIsCartOpen(false)} />
@@ -532,9 +532,9 @@ export default function HomePage() {
               )}
             </div>
 
-            {/* Footer del carrito: AQUÍ ESTÁ LA SOLUCIÓN (pb-10 en móvil) */}
+            {/* Footer del carrito: Efecto de sombra Z-10 para incitar el scroll */}
             {cart.length > 0 && (
-              <div className="border-t border-[#EAEAEC] p-4 pb-10 md:p-6 md:pb-6 bg-white space-y-3 md:space-y-4 flex-shrink-0 shadow-[0_-10px_20px_rgba(0,0,0,0.02)]">
+              <div className="relative z-10 border-t border-[#EAEAEC] p-4 pb-8 md:p-6 md:pb-6 bg-white space-y-3 md:space-y-4 flex-shrink-0 shadow-[0_-16px_24px_rgba(0,0,0,0.06)]">
                 {savings > 0 && (
                   <div className="flex justify-between items-center text-[10px] md:text-xs font-bold text-[#4A6310] bg-[#E8F8B6]/50 px-3 py-2 rounded-lg border border-[#C8F169]/40">
                     <span className="flex items-center gap-1">🔥 Promo ({cartItemCount} pares)</span>
@@ -556,8 +556,8 @@ export default function HomePage() {
                   Continuar por WhatsApp <ArrowRight size={16} />
                 </button>
                 
-                {/* ELIMINACIÓN DE OBJECIONES */}
-                <div className="flex justify-center items-center gap-2 md:gap-3 pt-0.5 text-[8px] md:text-[9px] sm:text-[10px] font-bold text-[#A1A1AA] uppercase tracking-widest">
+                {/* ELIMINACIÓN DE OBJECIONES - OCULTO EN MÓVIL PARA AHORRAR ESPACIO */}
+                <div className="hidden md:flex justify-center items-center gap-2 md:gap-3 pt-0.5 text-[8px] md:text-[9px] sm:text-[10px] font-bold text-[#A1A1AA] uppercase tracking-widest">
                   <span>🔒 Pago seguro</span>
                   <span>•</span>
                   <span>📦 Envío a todo el país</span>
