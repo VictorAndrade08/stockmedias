@@ -68,13 +68,20 @@ export default function HomePage() {
   
   // Estado para el botón de "Volver Arriba"
   const [showScrollTop, setShowScrollTop] = useState(false);
+  const [showRecoveryToast, setShowRecoveryToast] = useState(false);
 
   // --- PERSISTENCIA DEL CARRITO ---
   useEffect(() => {
     const savedCart = localStorage.getItem('wolfe_socks_cart');
     if (savedCart) {
       try {
-        setCart(JSON.parse(savedCart));
+        const parsedCart = JSON.parse(savedCart);
+        setCart(parsedCart);
+        
+        if (parsedCart.length > 0) {
+          setShowRecoveryToast(true);
+          setTimeout(() => setShowRecoveryToast(false), 5000); 
+        }
       } catch (err) {
         console.error("Error al cargar el carrito persistente:", err);
       }
@@ -278,6 +285,14 @@ export default function HomePage() {
   return (
     <div className="min-h-screen bg-[#F4F5F4] text-[#111111] font-sans selection:bg-[#C8F169] selection:text-[#111111] relative pb-16 md:pb-0">
       
+      {/* --- TOAST RECUPERACIÓN (SOLO DESKTOP) --- */}
+      {showRecoveryToast && (
+        <div className="hidden md:flex fixed top-6 left-1/2 -translate-x-1/2 z-[100] bg-[#1A1A1A] text-white px-5 py-3 rounded-full text-sm font-bold shadow-xl animate-in slide-in-from-top-4 fade-in items-center gap-3 w-auto justify-between">
+          <span className="flex-1 text-center">👀 Tus medias te esperan en el carrito</span>
+          <button onClick={() => setShowRecoveryToast(false)} className="text-white/60 hover:text-white p-1 touch-manipulation"><X size={16}/></button>
+        </div>
+      )}
+
       {/* --- NAVEGACIÓN --- */}
       <header className="sticky top-0 z-40 bg-[#F4F5F4]/90 backdrop-blur-md border-b border-[#EAEAEC]">
         <div className="max-w-[1400px] mx-auto px-4 md:px-6 py-4 md:py-5 flex items-center justify-between">
@@ -455,20 +470,20 @@ export default function HomePage() {
         </div>
       )}
 
-      {/* --- CARRITO (CON PADDINGS REDUCIDOS PARA SOLUCIONAR EL "APLASTAMIENTO" EN MÓVIL) --- */}
+      {/* --- CARRITO (CON 'pb-10' PARA EVITAR CHOQUE CON NAVEGADOR EN MÓVIL) --- */}
       {isCartOpen && (
         <div className="fixed inset-0 z-[100] flex justify-end overflow-hidden">
           <div className="absolute inset-0 bg-black/40 backdrop-blur-sm transition-opacity" onClick={() => setIsCartOpen(false)} />
           
           <div className="relative w-full md:w-[400px] h-full bg-white shadow-2xl flex flex-col animate-in slide-in-from-right duration-300 border-l border-white/10">
             
-            {/* Header del carrito: padding reducido en móvil */}
+            {/* Header del carrito */}
             <div className="px-4 py-4 md:px-6 md:py-5 border-b border-[#EAEAEC] flex items-center justify-between bg-white flex-shrink-0">
               <h2 className="text-lg md:text-xl font-bold tracking-tight flex items-center gap-2"><ShoppingCart size={20} /> Tu Pedido</h2>
               <button onClick={() => setIsCartOpen(false)} className="p-2 bg-[#F4F5F4] hover:bg-[#EAEAEC] rounded-full transition-colors text-[#71717A] hover:text-[#111111] touch-manipulation"><X size={18} /></button>
             </div>
 
-            {/* BARRA DE PROGRESO DE AHORRO: padding reducido */}
+            {/* BARRA DE PROGRESO DE AHORRO */}
             {cart.length > 0 && (
               <div className="px-4 py-3 md:px-6 md:py-4 bg-[#F9FAFA] border-b border-[#EAEAEC] flex-shrink-0">
                 <div className="flex justify-between items-end mb-1.5 md:mb-2">
@@ -483,7 +498,7 @@ export default function HomePage() {
               </div>
             )}
 
-            {/* Lista de productos: padding reducido y tamaño de imagen más pequeño en móvil */}
+            {/* Lista de productos */}
             <div className="flex-1 overflow-y-auto overscroll-none p-4 md:p-6 space-y-4 md:space-y-6">
               {cart.length === 0 ? (
                 <div className="h-full flex flex-col items-center justify-center text-[#71717A] space-y-4">
@@ -517,9 +532,9 @@ export default function HomePage() {
               )}
             </div>
 
-            {/* Footer del carrito: Paddings y alturas optimizadas para que no ocupe media pantalla */}
+            {/* Footer del carrito: AQUÍ ESTÁ LA SOLUCIÓN (pb-10 en móvil) */}
             {cart.length > 0 && (
-              <div className="border-t border-[#EAEAEC] p-4 md:p-6 bg-white space-y-3 md:space-y-4 flex-shrink-0 shadow-[0_-10px_20px_rgba(0,0,0,0.02)]">
+              <div className="border-t border-[#EAEAEC] p-4 pb-10 md:p-6 md:pb-6 bg-white space-y-3 md:space-y-4 flex-shrink-0 shadow-[0_-10px_20px_rgba(0,0,0,0.02)]">
                 {savings > 0 && (
                   <div className="flex justify-between items-center text-[10px] md:text-xs font-bold text-[#4A6310] bg-[#E8F8B6]/50 px-3 py-2 rounded-lg border border-[#C8F169]/40">
                     <span className="flex items-center gap-1">🔥 Promo ({cartItemCount} pares)</span>
