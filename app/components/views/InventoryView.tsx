@@ -1,11 +1,55 @@
 "use client";
 
-import React, { useState, useMemo, useEffect } from 'react';
-import { List, LayoutGrid, Plus, Search, Package, Trash2, Pencil, X, RefreshCw, ImagePlus, ZoomIn, DollarSign, Sparkles } from 'lucide-react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
+import { List, LayoutGrid, Plus, Search, Package, Trash2, Pencil, X, RefreshCw, ImagePlus, ZoomIn, DollarSign, Sparkles, Upload, ChevronDown, ChevronUp, CheckCircle2 } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
 import { Product, Sale, Restock, NewProductState } from '../../../types';
 import { NameSuggester } from '../ui/NameSuggester';
 import { uploadImageToR2, generateShortCode, deleteImageFromR2 } from '../../../lib/utils';
+
+// ─────────────────────────────────────────────────────────
+// 🔥 BULK UPLOAD — tipos internos
+// ─────────────────────────────────────────────────────────
+interface BulkRow {
+  id: string;                  // uuid temporal para React key
+  imagePreview: string | null; // URL R2 ya subida
+  name: string;
+  cost: string;
+  price: string;
+  stock: string;
+  nameLoading: boolean;        // IA generando nombre
+  uploading: boolean;          // subiendo imagen a R2
+  saved: boolean;              // ya guardado en Supabase
+  error: string;
+}
+
+const EMPTY_ROW = (): BulkRow => ({
+  id: crypto.randomUUID(),
+  imagePreview: null,
+  name: '',
+  cost: '',
+  price: '',
+  stock: '',
+  nameLoading: false,
+  uploading: false,
+  saved: false,
+  error: '',
+});
+
+// Llama a tu propio endpoint de sugerencia de nombres con IA
+async function fetchAIName(imageUrl: string, existingNames: string[]): Promise<string> {
+  const res = await fetch('/api/suggest-name', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ imageUrl, existingNames }),
+  });
+  if (!res.ok) throw new Error('Error en API suggest-name');
+  const data = await res.json();
+  // Acepta tanto array como string según tu impl de suggestProductName
+  if (Array.isArray(data.names) && data.names.length > 0) return data.names[0];
+  if (typeof data.name === 'string') return data.name;
+  return '';
+}
 
 export function InventoryView({ products, userId, sales, restocks, onRefresh }: { products: Product[]; userId?: string; sales: Sale[]; restocks: Restock[]; onRefresh: () => void }) {
   const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
@@ -33,6 +77,16 @@ export function InventoryView({ products, userId, sales, restocks, onRefresh }: 
   const [enhancedImagePreview, setEnhancedImagePreview] = useState<string | null>(null);
 
   const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'nameAsc' | 'nameDesc'>('newest');
+
+  // ─────────────────────────────────────────────────────────
+  // 🔥 BULK UPLOAD — estado
+  // ─────────────────────────────────────────────────────────
+  const [showBulk, setShowBulk] = useState<boolean>(false);
+  const [bulkRows, setBulkRows] = useState<BulkRow[]>([EMPTY_ROW()]);
+  const [bulkSaving, setBulkSaving] = useState<boolean>(false);
+  const [bulkSuccess, setBulkSuccess] = useState<string>('');
+  const [isDraggingBulkZone, setIsDraggingBulkZone] = useState<boolean>(false);
+  const bulkFileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (window.innerWidth < 768) {
@@ -325,6 +379,130 @@ export function InventoryView({ products, userId, sales, restocks, onRefresh }: 
     } catch (err) { console.error(err); alert("Error eliminando reabastecimiento"); }
   };
 
+  // ─────────────────────────────────────────────────────────
+  // 🔥 BULK UPLOAD — handlers
+  // ─────────────────────────────────────────────────────────
+
+  // Actualiza un campo de una fila
+  const updateBulkRow = (id: string, patch: Partial<BulkRow>) => {
+    setBulkRows(prev => prev.map(r => r.id === id ? { ...r, ...patch } : r));
+  };
+
+  // 🔥 CORE: sube imagen + auto-genera nombre con IA al instante
+  const handleBulkImageForRow = async (rowId: string, file: File) => {
+    if (!file.type.startsWith('image/')) return;
+
+    // 1. Mostrar preview local inmediato (UX)
+    const localUrl = URL.createObjectURL(file);
+    updateBulkRow(rowId, { imagePreview: localUrl, uploading: true, nameLoading: true, name: '' });
+
+    try {
+      // 2. Subir a R2
+      const r2Url = await uploadImageToR2(file);
+      updateBulkRow(rowId, { imagePreview: r2Url, uploading: false });
+
+      // 3. Auto-generar nombre con IA en paralelo (no bloquea el guardado)
+      try {
+        const existingNames = [
+          ...products.map(p => p.name),
+          ...bulkRows.filter(r => r.id !== rowId && r.name).map(r => r.name),
+        ];
+        const aiName = await fetchAIName(r2Url, existingNames);
+        updateBulkRow(rowId, { name: aiName, nameLoading: false });
+      } catch {
+        updateBulkRow(rowId, { nameLoading: false });
+      }
+    } catch (err) {
+      console.error(err);
+      updateBulkRow(rowId, { uploading: false, nameLoading: false, error: 'Error subiendo imagen' });
+    }
+  };
+
+  // Drop de múltiples imágenes en la zona general → crea una fila por imagen
+  const handleBulkZoneDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDraggingBulkZone(false);
+    const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'));
+    if (!files.length) return;
+
+    // Crear filas nuevas primero
+    const newRows: BulkRow[] = files.map(() => EMPTY_ROW());
+    setBulkRows(prev => {
+      // Si solo hay una fila vacía, reemplazarla
+      const hasOnlyEmpty = prev.length === 1 && !prev[0].imagePreview && !prev[0].name;
+      return hasOnlyEmpty ? newRows : [...prev, ...newRows];
+    });
+
+    // Procesar cada archivo en su fila
+    files.forEach((file, i) => {
+      handleBulkImageForRow(newRows[i].id, file);
+    });
+  };
+
+  // Selector de archivos múltiples para la zona general
+  const handleBulkZoneFileInput = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []).filter(f => f.type.startsWith('image/'));
+    if (!files.length) return;
+
+    const newRows: BulkRow[] = files.map(() => EMPTY_ROW());
+    setBulkRows(prev => {
+      const hasOnlyEmpty = prev.length === 1 && !prev[0].imagePreview && !prev[0].name;
+      return hasOnlyEmpty ? newRows : [...prev, ...newRows];
+    });
+
+    files.forEach((file, i) => {
+      handleBulkImageForRow(newRows[i].id, file);
+    });
+
+    // Reset input para permitir re-selección del mismo archivo
+    e.target.value = '';
+  };
+
+  // Guardar todos los productos del bulk de una vez
+  const handleBulkSave = async () => {
+    if (!supabase) return;
+    const validRows = bulkRows.filter(r => !r.saved && r.name.trim() && r.cost && r.price && r.stock);
+    if (!validRows.length) return;
+
+    setBulkSaving(true);
+    const activeUserId = products.length > 0 ? (products[0] as any).user_id : userId;
+
+    for (const row of validRows) {
+      try {
+        await supabase.from('products').insert([{
+          sku: generateShortCode(),
+          name: row.name.trim(),
+          cost: parseFloat(row.cost),
+          price: parseFloat(row.price),
+          stock: parseInt(row.stock),
+          image_url: row.imagePreview,
+          user_id: activeUserId,
+        }]).throwOnError();
+        updateBulkRow(row.id, { saved: true, error: '' });
+      } catch (err: any) {
+        updateBulkRow(row.id, { error: 'Error al guardar' });
+        console.error(err);
+      }
+    }
+
+    setBulkSaving(false);
+    onRefresh();
+
+    const savedCount = validRows.length;
+    setBulkSuccess(`¡${savedCount} producto${savedCount > 1 ? 's' : ''} guardado${savedCount > 1 ? 's' : ''} con éxito!`);
+    setTimeout(() => {
+      setBulkSuccess('');
+      // Limpiar filas guardadas, dejar solo las que fallaron o están incompletas
+      setBulkRows(prev => {
+        const remaining = prev.filter(r => !r.saved);
+        return remaining.length > 0 ? remaining : [EMPTY_ROW()];
+      });
+    }, 3000);
+  };
+
+  const bulkReadyCount = bulkRows.filter(r => !r.saved && r.name.trim() && r.cost && r.price && r.stock).length;
+  const bulkAllSaved = bulkRows.every(r => r.saved);
+
   const productRestocks = detailProduct
     ? restocks.filter(r => r.product_id === detailProduct.id).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
     : [];
@@ -364,9 +542,206 @@ export function InventoryView({ products, userId, sales, restocks, onRefresh }: 
             <button onClick={() => setViewMode('list')} className={`p-2 rounded-[0.75rem] transition-all touch-manipulation ${viewMode === 'list' ? 'bg-white shadow-sm border border-[#EAEAEC] text-[#111111]' : 'text-[#A1A1AA] hover:text-[#111111]'}`}><List size={18} /></button>
             <button onClick={() => setViewMode('grid')} className={`p-2 rounded-[0.75rem] transition-all touch-manipulation ${viewMode === 'grid' ? 'bg-white shadow-sm border border-[#EAEAEC] text-[#111111]' : 'text-[#A1A1AA] hover:text-[#111111]'}`}><LayoutGrid size={18} /></button>
           </div>
-          <button onClick={() => setShowAdd(!showAdd)} className="bg-[#1A1A1A] hover:bg-black text-white px-6 py-3 sm:py-3 rounded-[1.25rem] flex items-center justify-center space-x-2 transition-all shadow-md shadow-black/10 active:scale-95 font-medium w-full sm:w-auto touch-manipulation"><Plus size={18} /><span>Nuevo Producto</span></button>
+
+          {/* 🔥 NUEVO: botón Carga Masiva */}
+          <button
+            onClick={() => { setShowBulk(!showBulk); setShowAdd(false); }}
+            className={`bg-white hover:bg-[#F9FAFA] border-2 text-[#111111] px-5 py-3 sm:py-3 rounded-[1.25rem] flex items-center justify-center space-x-2 transition-all shadow-sm active:scale-95 font-medium w-full sm:w-auto touch-manipulation ${showBulk ? 'border-[#C8F169] bg-[#E8F8B6]/20' : 'border-[#EAEAEC]'}`}
+          >
+            <Upload size={16} />
+            <span>Carga Masiva</span>
+            {showBulk ? <ChevronUp size={14} className="text-[#A1A1AA]" /> : <ChevronDown size={14} className="text-[#A1A1AA]" />}
+          </button>
+
+          <button onClick={() => { setShowAdd(!showAdd); setShowBulk(false); }} className="bg-[#1A1A1A] hover:bg-black text-white px-6 py-3 sm:py-3 rounded-[1.25rem] flex items-center justify-center space-x-2 transition-all shadow-md shadow-black/10 active:scale-95 font-medium w-full sm:w-auto touch-manipulation"><Plus size={18} /><span>Nuevo Producto</span></button>
         </div>
       </div>
+
+      {/* ─────────────────────────────────────────────────────────
+          🔥 BULK UPLOAD — Panel principal
+         ───────────────────────────────────────────────────────── */}
+      {showBulk && (
+        <div className="bg-white p-4 md:p-8 rounded-[2rem] border border-[#EAEAEC] shadow-[0_8px_30px_rgb(0,0,0,0.04)] space-y-6 animate-in fade-in slide-in-from-top-4 w-full">
+          <div>
+            <h3 className="text-xl font-medium text-[#111111] tracking-tight">Carga Masiva de Medias</h3>
+            <p className="text-sm text-[#71717A] font-medium mt-1">Sube varias fotos a la vez — el nombre se genera solo con IA al instante.</p>
+          </div>
+
+          {/* Zona de drop masivo */}
+          <label
+            className={`flex flex-col items-center justify-center gap-3 w-full px-6 py-8 border-2 border-dashed rounded-[1.5rem] transition-all cursor-pointer ${isDraggingBulkZone ? 'border-[#C8F169] bg-[#E8F8B6]/20 scale-[1.01]' : 'border-[#EAEAEC] bg-[#F9FAFA] hover:border-[#C8F169]/60 hover:bg-[#E8F8B6]/10'}`}
+            onDragOver={e => { e.preventDefault(); setIsDraggingBulkZone(true); }}
+            onDragLeave={() => setIsDraggingBulkZone(false)}
+            onDrop={handleBulkZoneDrop}
+          >
+            <Upload size={28} className={isDraggingBulkZone ? 'text-[#4A6310]' : 'text-[#A1A1AA]'} />
+            <div className="text-center">
+              <p className="text-sm font-medium text-[#111111]">{isDraggingBulkZone ? 'Suelta las fotos aquí' : 'Arrastra varias fotos aquí o haz clic para seleccionar'}</p>
+              <p className="text-xs text-[#A1A1AA] mt-1">Se creará una fila por cada imagen — el nombre se sugiere automáticamente con IA</p>
+            </div>
+            <input
+              ref={bulkFileInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              onChange={handleBulkZoneFileInput}
+              className="hidden"
+            />
+          </label>
+
+          {/* Tabla de filas */}
+          <div className="space-y-3">
+            {bulkRows.map((row, idx) => (
+              <div
+                key={row.id}
+                className={`grid grid-cols-1 md:grid-cols-[80px_1fr_100px_100px_80px_36px] gap-3 items-start bg-[#F9FAFA] border rounded-[1.25rem] p-3 transition-all ${row.saved ? 'border-[#C8F169]/60 bg-[#E8F8B6]/10' : 'border-[#EAEAEC]'}`}
+              >
+                {/* Imagen */}
+                <label className="relative w-20 h-20 rounded-[0.75rem] bg-white border-2 border-dashed border-[#EAEAEC] hover:border-[#C8F169] flex items-center justify-center overflow-hidden cursor-pointer transition-all flex-shrink-0 touch-manipulation">
+                  {row.uploading ? (
+                    <RefreshCw size={18} className="text-[#A1A1AA] animate-spin" />
+                  ) : row.imagePreview ? (
+                    <img src={row.imagePreview} alt="" className="w-full h-full object-cover" />
+                  ) : (
+                    <ImagePlus size={18} className="text-[#A1A1AA]" />
+                  )}
+                  {row.saved && (
+                    <div className="absolute inset-0 bg-[#E8F8B6]/80 flex items-center justify-center">
+                      <CheckCircle2 size={22} className="text-[#4A6310]" />
+                    </div>
+                  )}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={e => { const f = e.target.files?.[0]; if (f) handleBulkImageForRow(row.id, f); e.target.value = ''; }}
+                    disabled={row.saved}
+                  />
+                </label>
+
+                {/* Nombre */}
+                <div className="flex flex-col gap-1 min-w-0">
+                  <label className="text-[10px] font-bold uppercase tracking-widest text-[#A1A1AA]">Nombre</label>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      required
+                      value={row.name}
+                      onChange={e => updateBulkRow(row.id, { name: e.target.value })}
+                      placeholder={row.nameLoading ? 'Generando nombre con IA...' : 'Ej. Medias de compresión'}
+                      disabled={row.saved}
+                      className="w-full px-4 py-2.5 bg-white border border-[#EAEAEC] rounded-[1rem] focus:ring-2 focus:ring-[#C8F169] focus:border-[#C8F169] transition-all outline-none text-sm disabled:opacity-60"
+                    />
+                    {row.nameLoading && (
+                      <div className="absolute right-3 top-2.5">
+                        <RefreshCw size={14} className="text-[#4A6310] animate-spin" />
+                      </div>
+                    )}
+                  </div>
+                  {row.error && <p className="text-[10px] text-red-500 font-medium">{row.error}</p>}
+                </div>
+
+                {/* Costo */}
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] font-bold uppercase tracking-widest text-[#A1A1AA]">Costo ($)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={row.cost}
+                    onChange={e => updateBulkRow(row.id, { cost: e.target.value })}
+                    placeholder="0.00"
+                    disabled={row.saved}
+                    className="w-full px-3 py-2.5 bg-white border border-[#EAEAEC] rounded-[1rem] focus:ring-2 focus:ring-[#C8F169] focus:border-[#C8F169] transition-all outline-none text-sm disabled:opacity-60"
+                  />
+                </div>
+
+                {/* Precio */}
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] font-bold uppercase tracking-widest text-[#A1A1AA]">Precio ($)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={row.price}
+                    onChange={e => updateBulkRow(row.id, { price: e.target.value })}
+                    placeholder="0.00"
+                    disabled={row.saved}
+                    className="w-full px-3 py-2.5 bg-white border border-[#EAEAEC] rounded-[1rem] focus:ring-2 focus:ring-[#C8F169] focus:border-[#C8F169] transition-all outline-none text-sm disabled:opacity-60"
+                  />
+                </div>
+
+                {/* Stock */}
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] font-bold uppercase tracking-widest text-[#A1A1AA]">Stock</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={row.stock}
+                    onChange={e => updateBulkRow(row.id, { stock: e.target.value })}
+                    placeholder="0"
+                    disabled={row.saved}
+                    className="w-full px-3 py-2.5 bg-white border border-[#EAEAEC] rounded-[1rem] focus:ring-2 focus:ring-[#C8F169] focus:border-[#C8F169] transition-all outline-none text-sm disabled:opacity-60"
+                  />
+                </div>
+
+                {/* Eliminar fila */}
+                <div className="flex items-center justify-end md:justify-center pt-5 md:pt-0">
+                  {row.saved ? (
+                    <CheckCircle2 size={20} className="text-[#4A6310]" />
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setBulkRows(prev => prev.length === 1 ? [EMPTY_ROW()] : prev.filter(r => r.id !== row.id))}
+                      className="p-1.5 rounded-[0.5rem] text-[#A1A1AA] hover:text-red-500 hover:bg-red-50 transition-colors touch-manipulation"
+                    >
+                      <X size={16} />
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Acciones del bulk */}
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-4 border-t border-[#EAEAEC]/60">
+            <button
+              type="button"
+              onClick={() => setBulkRows(prev => [...prev, EMPTY_ROW()])}
+              className="w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-2.5 border-2 border-dashed border-[#EAEAEC] hover:border-[#C8F169] rounded-[1.25rem] text-sm font-medium text-[#71717A] hover:text-[#111111] transition-all touch-manipulation"
+            >
+              <Plus size={15} /><span>Agregar fila vacía</span>
+            </button>
+
+            <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
+              {bulkSuccess && (
+                <span className="text-sm font-medium text-[#4A6310] bg-[#E8F8B6]/50 border border-[#C8F169]/40 px-4 py-2.5 rounded-[1.25rem] text-center">
+                  {bulkSuccess}
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={() => { setShowBulk(false); setBulkRows([EMPTY_ROW()]); }}
+                className="w-full sm:w-auto px-6 py-2.5 text-[#71717A] hover:text-[#111111] bg-[#F4F5F4] hover:bg-[#EAEAEC] rounded-[1.25rem] font-medium transition-colors touch-manipulation text-sm"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleBulkSave}
+                disabled={bulkSaving || bulkReadyCount === 0}
+                className="w-full sm:w-auto bg-[#1A1A1A] hover:bg-black text-white px-8 py-2.5 rounded-[1.25rem] transition-all font-medium shadow-md shadow-black/10 active:scale-95 touch-manipulation disabled:bg-[#F4F5F4] disabled:text-[#A1A1AA] disabled:cursor-not-allowed text-sm flex items-center justify-center gap-2"
+              >
+                {bulkSaving ? (
+                  <><RefreshCw size={14} className="animate-spin" /><span>Guardando...</span></>
+                ) : (
+                  <span>Guardar {bulkReadyCount > 0 ? `${bulkReadyCount} producto${bulkReadyCount > 1 ? 's' : ''}` : 'productos'}</span>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showAdd && (
         <form onSubmit={handleAdd} className="bg-white p-4 md:p-8 rounded-[2rem] border border-[#EAEAEC] shadow-[0_8px_30px_rgb(0,0,0,0.04)] grid grid-cols-1 md:grid-cols-5 gap-4 md:gap-5 items-end animate-in fade-in slide-in-from-top-4 w-full">

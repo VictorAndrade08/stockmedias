@@ -243,7 +243,7 @@ export default function HomePage() {
     message += `\n💰 *Total a pagar: $${cartTotal.toFixed(2)}*\n\nPor favor cotiza o envía eso quiero.`;
 
     const encodedMessage = encodeURIComponent(message);
-    const whatsappNumber = "593983445421"; 
+    const whatsappNumber = "593989022707"; 
     
     window.open(`https://wa.me/${whatsappNumber}?text=${encodedMessage}`, '_blank');
   };
