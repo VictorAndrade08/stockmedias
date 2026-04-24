@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { ShoppingBag, User, X, ArrowRight, ShoppingCart, Check, ZoomIn, Search, ChevronUp, Plus, Package } from 'lucide-react';
+import { ShoppingBag, User, X, ArrowRight, ShoppingCart, Check, ZoomIn, Search, ChevronUp, Plus, Package, ChevronLeft, ChevronRight } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 import { useRouter } from 'next/navigation'; 
 
@@ -63,10 +63,10 @@ export default function HomePage() {
   const [clientName, setClientName] = useState('');
   
   const [addedItems, setAddedItems] = useState<{ [key: string]: boolean }>({});
-  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+  // Cambiamos lightboxUrl por lightboxIndex para poder navegar entre productos
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [cartBump, setCartBump] = useState(false); 
   
-  // Estado para el botón de "Volver Arriba"
   const [showScrollTop, setShowScrollTop] = useState(false);
   const [showRecoveryToast, setShowRecoveryToast] = useState(false);
 
@@ -92,30 +92,40 @@ export default function HomePage() {
     localStorage.setItem('wolfe_socks_cart', JSON.stringify(cart));
   }, [cart]);
 
-  // --- BLOQUEO DE SCROLL MÓVIL Y BOTÓN VOLVER ARRIBA ---
+  // --- BLOQUEO DE SCROLL MÓVIL (HACK 2026: NO PERDER LA POSICIÓN) ---
   useEffect(() => {
     const handleScroll = () => {
       setShowScrollTop(window.scrollY > 500);
     };
     window.addEventListener('scroll', handleScroll);
 
-    if (isCartOpen || lightboxUrl) {
-      document.body.style.overflow = 'hidden';
+    if (isCartOpen || lightboxIndex !== null) {
+      // Guardamos la posición exacta antes de bloquear
+      const scrollY = window.scrollY;
       document.body.style.position = 'fixed';
+      document.body.style.top = `-${scrollY}px`; // Clavamos la página en esa posición
       document.body.style.width = '100%';
+      document.body.style.overflow = 'hidden';
     } else {
-      document.body.style.overflow = '';
+      // Al cerrar, leemos dónde estaba anclado y devolvemos al usuario ahí
+      const scrollY = document.body.style.top;
       document.body.style.position = '';
+      document.body.style.top = '';
       document.body.style.width = '';
+      document.body.style.overflow = '';
+      if (scrollY) {
+        window.scrollTo(0, parseInt(scrollY || '0') * -1);
+      }
     }
 
     return () => { 
       window.removeEventListener('scroll', handleScroll);
       document.body.style.overflow = ''; 
       document.body.style.position = '';
+      document.body.style.top = '';
       document.body.style.width = '';
     };
-  }, [isCartOpen, lightboxUrl]);
+  }, [isCartOpen, lightboxIndex]);
 
   // --- CARGA DE DATOS ---
   useEffect(() => {
@@ -285,7 +295,7 @@ export default function HomePage() {
   return (
     <div className="min-h-screen bg-[#F4F5F4] text-[#111111] font-sans selection:bg-[#C8F169] selection:text-[#111111] relative pb-16 md:pb-0">
       
-      {/* --- TOAST RECUPERACIÓN (SOLO DESKTOP) --- */}
+      {/* --- TOAST RECUPERACIÓN --- */}
       {showRecoveryToast && (
         <div className="hidden md:flex fixed top-6 left-1/2 -translate-x-1/2 z-[100] bg-[#1A1A1A] text-white px-5 py-3 rounded-full text-sm font-bold shadow-xl animate-in slide-in-from-top-4 fade-in items-center gap-3 w-auto justify-between">
           <span className="flex-1 text-center">👀 Tus medias te esperan en el carrito</span>
@@ -344,7 +354,7 @@ export default function HomePage() {
             <button onClick={() => setSearchTerm('')} className="absolute inset-y-0 right-0 pr-4 flex items-center text-[#A1A1AA] hover:text-[#111111] transition-colors"><X size={18} /></button>
           )}
 
-          {/* BUSCADOR PREDICTIVO VISUAL (MENU FLOTANTE) */}
+          {/* BUSCADOR PREDICTIVO VISUAL */}
           {searchTerm.trim() && (
             <div className="absolute top-full left-0 right-0 mt-2 bg-white border border-[#EAEAEC] rounded-2xl shadow-[0_12px_40px_rgba(0,0,0,0.1)] overflow-hidden z-50 max-h-[50vh] overflow-y-auto animate-in fade-in slide-in-from-top-2 text-left">
               {displayedProducts.length > 0 ? (
@@ -399,13 +409,13 @@ export default function HomePage() {
         ) : (
           <>
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-x-3 sm:gap-x-6 gap-y-10 sm:gap-y-12">
-              {displayedProducts.map((product) => (
+              {displayedProducts.map((product, index) => (
                 <div key={product.id} className="group flex flex-col h-full">
                   
-                  {/* FOTO 100% LIMPIA */}
+                  {/* FOTO 100% LIMPIA (CON ÍNDICE PARA LIGHTBOX) */}
                   <div 
                     className="relative w-full aspect-square bg-gradient-to-b from-[#EAEAEC] to-[#F4F5F4] rounded-2xl sm:rounded-[1.5rem] mb-3 md:mb-4 flex items-center justify-center overflow-hidden border border-[#EAEAEC]/50 shadow-sm transition-all duration-500 group-hover:shadow-md cursor-zoom-in"
-                    onClick={() => setLightboxUrl(product.image_url || 'fallback')}
+                    onClick={() => setLightboxIndex(index)}
                   >
                     {product.image_url ? (
                       <img src={product.image_url} alt={product.name} loading="lazy" className="absolute inset-0 w-full h-full object-cover mix-blend-multiply group-hover:scale-105 transition-transform duration-700 ease-out" />
@@ -445,7 +455,7 @@ export default function HomePage() {
         )}
       </main>
 
-      {/* --- BOTÓN VOLVER ARRIBA (SCROLL TO TOP) --- */}
+      {/* --- BOTÓN VOLVER ARRIBA --- */}
       {showScrollTop && (
         <button 
           onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
@@ -477,13 +487,11 @@ export default function HomePage() {
           
           <div className="relative w-full md:w-[400px] h-full bg-white shadow-2xl flex flex-col animate-in slide-in-from-right duration-300 border-l border-white/10">
             
-            {/* Header del carrito */}
             <div className="px-4 py-4 md:px-6 md:py-5 border-b border-[#EAEAEC] flex items-center justify-between bg-white flex-shrink-0">
               <h2 className="text-lg md:text-xl font-bold tracking-tight flex items-center gap-2"><ShoppingCart size={20} /> Tu Pedido</h2>
               <button onClick={() => setIsCartOpen(false)} className="p-2 bg-[#F4F5F4] hover:bg-[#EAEAEC] rounded-full transition-colors text-[#71717A] hover:text-[#111111] touch-manipulation"><X size={18} /></button>
             </div>
 
-            {/* BARRA DE PROGRESO DE AHORRO */}
             {cart.length > 0 && (
               <div className="px-4 py-3 md:px-6 md:py-4 bg-[#F9FAFA] border-b border-[#EAEAEC] flex-shrink-0">
                 <div className="flex justify-between items-end mb-1.5 md:mb-2">
@@ -498,7 +506,6 @@ export default function HomePage() {
               </div>
             )}
 
-            {/* Lista de productos */}
             <div className="flex-1 overflow-y-auto overscroll-none p-4 md:p-6 space-y-4 md:space-y-6">
               {cart.length === 0 ? (
                 <div className="h-full flex flex-col items-center justify-center text-[#71717A] space-y-4">
@@ -532,7 +539,6 @@ export default function HomePage() {
               )}
             </div>
 
-            {/* Footer del carrito: Efecto de sombra Z-10 para incitar el scroll */}
             {cart.length > 0 && (
               <div className="relative z-10 border-t border-[#EAEAEC] p-4 pb-8 md:p-6 md:pb-6 bg-white space-y-3 md:space-y-4 flex-shrink-0 shadow-[0_-16px_24px_rgba(0,0,0,0.06)]">
                 {savings > 0 && (
@@ -556,7 +562,6 @@ export default function HomePage() {
                   Continuar por WhatsApp <ArrowRight size={16} />
                 </button>
                 
-                {/* ELIMINACIÓN DE OBJECIONES - OCULTO EN MÓVIL PARA AHORRAR ESPACIO */}
                 <div className="hidden md:flex justify-center items-center gap-2 md:gap-3 pt-0.5 text-[8px] md:text-[9px] sm:text-[10px] font-bold text-[#A1A1AA] uppercase tracking-widest">
                   <span>🔒 Pago seguro</span>
                   <span>•</span>
@@ -568,18 +573,65 @@ export default function HomePage() {
         </div>
       )}
 
-      {lightboxUrl && (
-        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/90 backdrop-blur-sm animate-in fade-in" onClick={() => setLightboxUrl(null)}>
-          <button className="absolute top-6 right-4 md:top-8 md:right-8 p-3 rounded-full bg-white/20 hover:bg-white/30 backdrop-blur-md text-white transition-colors touch-manipulation z-[130] shadow-lg">
+      {/* --- NUEVO LIGHTBOX INTERACTIVO (SHOPPABLE LIGHTBOX) --- */}
+      {lightboxIndex !== null && displayedProducts[lightboxIndex] && (
+        <div className="fixed inset-0 z-[120] flex flex-col items-center justify-center bg-black/95 backdrop-blur-sm animate-in fade-in" onClick={() => setLightboxIndex(null)}>
+          
+          <button className="absolute top-6 right-4 md:top-8 md:right-8 p-3 rounded-full bg-white/10 hover:bg-white/20 backdrop-blur-md text-white transition-colors touch-manipulation z-[130] shadow-lg">
             <X size={24} />
           </button>
-          {lightboxUrl === 'fallback' ? (
-            <div className="w-64 h-64 bg-white rounded-3xl flex items-center justify-center animate-in zoom-in-90 shadow-2xl relative" onClick={e => e.stopPropagation()}>
-              <img src={STORE_LOGO_URL} alt="Sin imagen" className="w-24 h-24 object-contain opacity-20 grayscale" />
+
+          {/* FLECHAS DE NAVEGACIÓN */}
+          <button 
+            onClick={(e) => { e.stopPropagation(); setLightboxIndex(prev => prev! > 0 ? prev! - 1 : displayedProducts.length - 1); }}
+            className="absolute left-2 md:left-8 p-3 md:p-4 rounded-full bg-white/10 hover:bg-white/20 backdrop-blur-md text-white transition-colors touch-manipulation z-[130]"
+          >
+            <ChevronLeft size={28} />
+          </button>
+
+          <button 
+            onClick={(e) => { e.stopPropagation(); setLightboxIndex(prev => prev! < displayedProducts.length - 1 ? prev! + 1 : 0); }}
+            className="absolute right-2 md:right-8 p-3 md:p-4 rounded-full bg-white/10 hover:bg-white/20 backdrop-blur-md text-white transition-colors touch-manipulation z-[130]"
+          >
+            <ChevronRight size={28} />
+          </button>
+
+          {/* CONTENIDO DEL LIGHTBOX */}
+          <div className="relative flex flex-col items-center justify-center w-full px-12 md:px-24" onClick={e => e.stopPropagation()}>
+            
+            {displayedProducts[lightboxIndex].image_url ? (
+              <img 
+                src={displayedProducts[lightboxIndex].image_url} 
+                alt={displayedProducts[lightboxIndex].name} 
+                className="max-w-full max-h-[60vh] md:max-h-[70vh] rounded-2xl shadow-2xl object-contain animate-in zoom-in-90" 
+              />
+            ) : (
+              <div className="w-64 h-64 bg-white rounded-3xl flex items-center justify-center animate-in zoom-in-90 shadow-2xl">
+                <img src={STORE_LOGO_URL} alt="Sin imagen" className="w-24 h-24 object-contain opacity-20 grayscale" />
+              </div>
+            )}
+
+            {/* TARJETA DE COMPRA INFERIOR (RESPETA TU DISEÑO) */}
+            <div className="w-full max-w-[320px] md:max-w-sm mt-6 bg-white p-4 rounded-2xl shadow-2xl flex flex-col gap-3 animate-in slide-in-from-bottom-4">
+              <div className="flex justify-between items-start gap-2">
+                <div>
+                  {displayedProducts[lightboxIndex].sku && <span className="font-bold text-[10px] md:text-xs tracking-widest text-[#4A6310] bg-[#E8F8B6] px-2.5 py-0.5 rounded-full mb-1.5 inline-block border border-[#C8F169]/40">#{displayedProducts[lightboxIndex].sku}</span>}
+                  <h3 className="font-bold text-[#111111] text-sm md:text-base leading-tight line-clamp-1">{displayedProducts[lightboxIndex].name}</h3>
+                </div>
+                <span className="font-black text-[#111111] text-base shrink-0">${displayedProducts[lightboxIndex].price.toFixed(2)}</span>
+              </div>
+              
+              <div className="flex gap-2 w-full pt-1">
+                <button onClick={() => handleAddToCart(displayedProducts[lightboxIndex!], false)} className={`flex-1 flex items-center justify-center gap-1 text-xs sm:text-sm font-bold py-3 rounded-xl shadow-sm transition-all border active:scale-95 touch-manipulation ${addedItems[displayedProducts[lightboxIndex!].id] ? 'bg-[#E8F8B6] border-[#C8F169]/40 text-[#4A6310]' : 'bg-white border-[#EAEAEC] text-[#111111] hover:bg-[#F4F5F4]'}`}>
+                  {addedItems[displayedProducts[lightboxIndex!].id] ? <><Check size={14}/> Añadido</> : 'Añadir'}
+                </button>
+                <button onClick={() => { handleAddToCart(displayedProducts[lightboxIndex!], true); setLightboxIndex(null); }} className="flex-1 bg-[#1A1A1A] hover:bg-black text-white text-xs sm:text-sm font-bold py-3 rounded-xl shadow-sm transition-colors border border-[#1A1A1A] active:scale-95 touch-manipulation">
+                  Comprar
+                </button>
+              </div>
             </div>
-          ) : (
-            <img src={lightboxUrl} alt="Vista ampliada" className="max-w-[95vw] max-h-[90vh] rounded-2xl shadow-2xl object-contain animate-in zoom-in-90 relative" onClick={e => e.stopPropagation()} />
-          )}
+
+          </div>
         </div>
       )}
     </div>
