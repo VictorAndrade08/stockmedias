@@ -276,9 +276,9 @@ export default function HomePage() {
   return (
     <div className="min-h-screen bg-[#F4F5F4] text-[#111111] font-sans selection:bg-[#C8F169] selection:text-[#111111] relative pb-16 md:pb-0">
       
-      {/* --- TOAST RECUPERACIÓN (SOLUCIONADO PARA RESPONSIVE) --- */}
+      {/* --- TOAST RECUPERACIÓN (SOLO DESKTOP - OCULTO EN MÓVIL) --- */}
       {showRecoveryToast && (
-        <div className="fixed bottom-24 md:bottom-auto md:top-6 left-1/2 -translate-x-1/2 z-[100] bg-[#1A1A1A] text-white px-5 py-3 rounded-full text-sm font-bold shadow-xl animate-in slide-in-from-bottom-4 md:slide-in-from-top-4 fade-in flex items-center gap-3 w-[90%] md:w-auto justify-between">
+        <div className="hidden md:flex fixed top-6 left-1/2 -translate-x-1/2 z-[100] bg-[#1A1A1A] text-white px-5 py-3 rounded-full text-sm font-bold shadow-xl animate-in slide-in-from-top-4 fade-in items-center gap-3 w-auto justify-between">
           <span className="flex-1 text-center">👀 Tus medias te esperan en el carrito</span>
           <button onClick={() => setShowRecoveryToast(false)} className="text-white/60 hover:text-white p-1 touch-manipulation"><X size={16}/></button>
         </div>
