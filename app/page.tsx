@@ -9,7 +9,6 @@ import { useRouter } from 'next/navigation';
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL as string;
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY as string; 
 
-// Forzamos 'no-store' para que Next.js y el navegador NUNCA guarden datos viejos en caché
 const supabase = (supabaseUrl && supabaseKey) 
   ? createClient(supabaseUrl, supabaseKey, {
       global: {
@@ -22,7 +21,6 @@ const supabase = (supabaseUrl && supabaseKey)
 const ITEMS_PER_PAGE = 12;
 const STORE_LOGO_URL = "https://pub-25cde2184a5249da96fa022aae951321.r2.dev/logo/logo.png";
 
-// --- TIPOS ---
 interface StoreProduct {
   id: string;
   sku: string | null;
@@ -37,7 +35,6 @@ interface CartItem {
   quantity: number;
 }
 
-// --- FUNCIÓN MEZCLADORA (SHUFFLE) ---
 const shuffleArray = (array: any[]) => {
   const shuffled = [...array];
   for (let i = shuffled.length - 1; i > 0; i--) {
@@ -47,7 +44,6 @@ const shuffleArray = (array: any[]) => {
   return shuffled;
 };
 
-// --- FUNCIÓN LIMPIADORA PARA BÚSQUEDA ---
 const normalizeText = (text: string) => {
   return text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 };
@@ -59,26 +55,31 @@ export default function HomePage() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   
-  // Scroll Infinito
   const [visibleCount, setVisibleCount] = useState(ITEMS_PER_PAGE);
   const loaderRef = useRef<HTMLDivElement>(null);
   
-  // Carrito y Checkout
   const [cart, setCart] = useState<CartItem[]>([]);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [clientName, setClientName] = useState('');
   
-  // Estados Visuales (UX)
   const [addedItems, setAddedItems] = useState<{ [key: string]: boolean }>({});
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const [cartBump, setCartBump] = useState(false); 
+  
+  const [showRecoveryToast, setShowRecoveryToast] = useState(false);
 
   // --- PERSISTENCIA DEL CARRITO ---
   useEffect(() => {
     const savedCart = localStorage.getItem('wolfe_socks_cart');
     if (savedCart) {
       try {
-        setCart(JSON.parse(savedCart));
+        const parsedCart = JSON.parse(savedCart);
+        setCart(parsedCart);
+        
+        if (parsedCart.length > 0) {
+          setShowRecoveryToast(true);
+          setTimeout(() => setShowRecoveryToast(false), 5000); 
+        }
       } catch (err) {
         console.error("Error al cargar el carrito persistente:", err);
       }
@@ -89,24 +90,30 @@ export default function HomePage() {
     localStorage.setItem('wolfe_socks_cart', JSON.stringify(cart));
   }, [cart]);
 
-  // --- BLOQUEO DE SCROLL MÓVIL (UX REDDIT 2026) ---
-  // Evita que la tienda de fondo haga scroll cuando el carrito está abierto
+  // --- BLOQUEO DE SCROLL MÓVIL (CORRECCIÓN "DESCUADRE") ---
   useEffect(() => {
     if (isCartOpen || lightboxUrl) {
       document.body.style.overflow = 'hidden';
+      document.body.style.position = 'fixed';
+      document.body.style.width = '100%';
     } else {
       document.body.style.overflow = '';
+      document.body.style.position = '';
+      document.body.style.width = '';
     }
-    return () => { document.body.style.overflow = ''; };
+    return () => { 
+      document.body.style.overflow = ''; 
+      document.body.style.position = '';
+      document.body.style.width = '';
+    };
   }, [isCartOpen, lightboxUrl]);
 
-  // --- CARGA, PRIORIZACIÓN Y MEZCLA DE DATOS (CON ANTI-CACHÉ) ---
+  // --- CARGA DE DATOS ---
   useEffect(() => {
     const fetchProducts = async () => {
       if (!supabase) return;
       setLoading(true);
 
-      // El .neq fuerza una query dinámica para evadir el caché estático de Next.js
       const { data, error } = await supabase
         .from('products')
         .select('id, sku, name, price, stock, image_url')
@@ -115,7 +122,6 @@ export default function HomePage() {
       if (error) {
         console.error('Error fetching store products:', error);
       } else if (data) {
-        // Prioridad visual: Fotos primero, luego sin fotos (mezclados internamente)
         const withPhoto = data.filter(p => p.image_url && p.image_url.trim() !== "");
         const withoutPhoto = data.filter(p => !p.image_url || p.image_url.trim() === "");
 
@@ -130,7 +136,7 @@ export default function HomePage() {
     fetchProducts();
   }, []);
 
-  // --- LÓGICA DE BÚSQUEDA INSTANTÁNEA ---
+  // --- BÚSQUEDA ---
   const filteredProducts = useMemo(() => {
     if (!searchTerm.trim()) return allProducts;
     
@@ -148,7 +154,7 @@ export default function HomePage() {
 
   const displayedProducts = filteredProducts.slice(0, visibleCount);
 
-  // --- SENSOR DE INTERSECCIÓN (SCROLL INFINITO) ---
+  // --- SCROLL INFINITO ---
   useEffect(() => {
     const observer = new IntersectionObserver(
       (entries) => {
@@ -169,7 +175,7 @@ export default function HomePage() {
     };
   }, [visibleCount, filteredProducts.length]);
 
-  // --- LÓGICA DEL CARRITO ---
+  // --- CARRITO LÓGICA ---
   const handleAddToCart = useCallback((product: StoreProduct, openCart: boolean = false) => {
     setCart(prev => {
       const existing = prev.find(item => item.product.id === product.id);
@@ -213,20 +219,17 @@ export default function HomePage() {
     setCart(prev => prev.filter(item => item.product.id !== productId));
   };
 
-  // --- MOTOR DE DESCUENTOS ---
+  // --- MATEMÁTICAS PROMOCIONES ---
   const originalTotal = useMemo(() => {
     return cart.reduce((sum, item) => sum + (item.product.price * item.quantity), 0);
   }, [cart]);
 
   const cartTotal = useMemo(() => {
     const totalItems = cart.reduce((sum, item) => sum + item.quantity, 0);
-    
     const promos12 = Math.floor(totalItems / 12);
     const remainder12 = totalItems % 12;
-    
     const promos4 = Math.floor(remainder12 / 4);
     const singles = remainder12 % 4;
-
     return (promos12 * 22) + (promos4 * 11) + (singles * 3.5);
   }, [cart]);
 
@@ -259,33 +262,40 @@ export default function HomePage() {
     window.open(`https://wa.me/${whatsappNumber}?text=${encodedMessage}`, '_blank');
   };
 
+  // --- LÓGICA DE BARRA DE PROGRESO ---
+  const getProgressState = () => {
+    if (cartItemCount < 4) {
+      return { goal: 4, needed: 4 - cartItemCount, progress: (cartItemCount / 4) * 100 };
+    } else if (cartItemCount < 12) {
+      return { goal: 12, needed: 12 - cartItemCount, progress: (cartItemCount / 12) * 100 };
+    }
+    return { goal: 12, needed: 0, progress: 100 };
+  };
+  const promoStatus = getProgressState();
+
   return (
     <div className="min-h-screen bg-[#F4F5F4] text-[#111111] font-sans selection:bg-[#C8F169] selection:text-[#111111] relative pb-16 md:pb-0">
       
-      {/* --- NAVEGACIÓN PRINCIPAL --- */}
+      {/* --- TOAST RECUPERACIÓN --- */}
+      {showRecoveryToast && (
+        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[100] bg-[#1A1A1A] text-white px-5 py-3 rounded-full text-sm font-bold shadow-xl animate-in slide-in-from-top-4 fade-in flex items-center gap-3 w-[90%] md:w-auto justify-between">
+          <span className="flex-1 text-center">👀 Tus medias te esperan en el carrito</span>
+          <button onClick={() => setShowRecoveryToast(false)} className="text-white/60 hover:text-white p-1 touch-manipulation"><X size={16}/></button>
+        </div>
+      )}
+
+      {/* --- NAVEGACIÓN --- */}
       <header className="sticky top-0 z-40 bg-[#F4F5F4]/90 backdrop-blur-md border-b border-[#EAEAEC]">
         <div className="max-w-[1400px] mx-auto px-4 md:px-6 py-4 md:py-5 flex items-center justify-between">
-          
           <div 
             className="flex items-center gap-0 text-xl md:text-[1.35rem] font-bold tracking-tight text-[#1A1A1A] cursor-pointer" 
             onClick={() => router.push('/')}
           >
-            <img 
-              src={STORE_LOGO_URL} 
-              alt="Wolfe Socks Logo" 
-              className="h-10 sm:h-12 md:h-14 w-auto object-contain transition-transform hover:scale-105 -mr-1 sm:-mr-1.5" 
-            />
+            <img src={STORE_LOGO_URL} alt="Wolfe Socks Logo" className="h-10 sm:h-12 md:h-14 w-auto object-contain transition-transform hover:scale-105 -mr-1 sm:-mr-1.5" />
             Wolfe Socks
           </div>
-          
-          <nav className="hidden md:flex items-center gap-8 text-sm font-medium text-[#111111]">
-             {/* Enlaces futuros */}
-          </nav>
-
           <div className="flex items-center gap-4 md:gap-5">
-            <button className="text-[#111111] hover:text-[#71717A] transition-colors hidden sm:block touch-manipulation">
-              <User size={22} />
-            </button>
+            <button className="text-[#111111] hover:text-[#71717A] transition-colors hidden sm:block touch-manipulation"><User size={22} /></button>
             <button 
               className={`text-[#111111] hover:text-[#71717A] transition-all relative touch-manipulation duration-300 ${cartBump ? 'scale-125' : 'scale-100'}`}
               onClick={() => setIsCartOpen(true)}
@@ -322,12 +332,7 @@ export default function HomePage() {
             className="w-full pl-12 pr-4 py-3.5 md:py-4 bg-white border border-[#EAEAEC] rounded-2xl focus:ring-2 focus:ring-[#1A1A1A] focus:border-[#1A1A1A] transition-all outline-none font-medium text-sm md:text-base shadow-[0_4px_24px_rgba(0,0,0,0.02)]"
           />
           {searchTerm && (
-            <button 
-              onClick={() => setSearchTerm('')}
-              className="absolute inset-y-0 right-0 pr-4 flex items-center text-[#A1A1AA] hover:text-[#111111] transition-colors"
-            >
-              <X size={18} />
-            </button>
+            <button onClick={() => setSearchTerm('')} className="absolute inset-y-0 right-0 pr-4 flex items-center text-[#A1A1AA] hover:text-[#111111] transition-colors"><X size={18} /></button>
           )}
         </div>
       </section>
@@ -343,84 +348,42 @@ export default function HomePage() {
           <div className="text-center py-20 text-[#71717A] font-medium flex flex-col items-center">
             <Search size={48} className="text-[#EAEAEC] mb-4" />
             <p>No se encontraron modelos para "<strong>{searchTerm}</strong>".</p>
-            <button 
-              onClick={() => setSearchTerm('')}
-              className="mt-4 text-sm font-bold text-[#1A1A1A] underline decoration-2 underline-offset-4 transition-colors"
-            >
-              Ver todo el catálogo
-            </button>
+            <button onClick={() => setSearchTerm('')} className="mt-4 text-sm font-bold text-[#1A1A1A] underline decoration-2 underline-offset-4 transition-colors touch-manipulation">Ver todo el catálogo</button>
           </div>
         ) : (
           <>
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-x-3 sm:gap-x-6 gap-y-10 sm:gap-y-12">
               {displayedProducts.map((product) => (
                 <div key={product.id} className="group flex flex-col h-full">
-                  
                   <div 
                     className="relative w-full aspect-square bg-gradient-to-b from-[#EAEAEC] to-[#F4F5F4] rounded-2xl sm:rounded-[1.5rem] mb-3 md:mb-4 flex items-center justify-center overflow-hidden border border-[#EAEAEC]/50 shadow-sm transition-all duration-500 group-hover:shadow-md cursor-zoom-in"
                     onClick={() => setLightboxUrl(product.image_url || 'fallback')}
                   >
                     {product.image_url ? (
-                      <img 
-                        src={product.image_url} 
-                        alt={product.name} 
-                        loading="lazy"
-                        className="absolute inset-0 w-full h-full object-cover mix-blend-multiply group-hover:scale-105 transition-transform duration-700 ease-out" 
-                      />
+                      <img src={product.image_url} alt={product.name} loading="lazy" className="absolute inset-0 w-full h-full object-cover mix-blend-multiply group-hover:scale-105 transition-transform duration-700 ease-out" />
                     ) : (
-                      <img 
-                        src={STORE_LOGO_URL} 
-                        alt="Sin imagen" 
-                        loading="lazy"
-                        className="w-20 h-20 md:w-28 md:h-28 object-contain opacity-30 grayscale group-hover:scale-110 transition-transform duration-700" 
-                      />
+                      <img src={STORE_LOGO_URL} alt="Sin imagen" loading="lazy" className="w-20 h-20 md:w-28 md:h-28 object-contain opacity-30 grayscale group-hover:scale-110 transition-transform duration-700" />
                     )}
                     
-                    <div className="absolute top-2 right-2 md:top-3 md:right-3 bg-white/90 backdrop-blur-sm p-1.5 rounded-full text-[#111111] opacity-0 group-hover:opacity-100 transition-opacity hidden md:block shadow-sm z-20">
-                      <ZoomIn size={16} />
-                    </div>
+                    <div className="absolute top-2 right-2 md:top-3 md:right-3 bg-white/90 backdrop-blur-sm p-1.5 rounded-full text-[#111111] opacity-0 group-hover:opacity-100 transition-opacity hidden md:block shadow-sm z-20"><ZoomIn size={16} /></div>
 
-                    <div 
-                      className="absolute inset-x-0 bottom-0 p-2 sm:p-3 flex gap-1.5 sm:gap-2 z-20"
-                      onClick={(e) => e.stopPropagation()} 
-                    >
-                      <button 
-                        onClick={() => handleAddToCart(product, false)}
-                        className={`flex-1 flex items-center justify-center gap-1 text-xs sm:text-sm font-bold py-2.5 sm:py-3 rounded-[0.75rem] shadow-sm transition-all active:scale-95 touch-manipulation ${addedItems[product.id] ? 'bg-[#E8F8B6] text-[#4A6310]' : 'bg-white text-[#111111] hover:bg-gray-50'}`}
-                      >
+                    <div className="absolute inset-x-0 bottom-0 p-2 sm:p-3 flex gap-1.5 sm:gap-2 z-20" onClick={(e) => e.stopPropagation()}>
+                      <button onClick={() => handleAddToCart(product, false)} className={`flex-1 flex items-center justify-center gap-1 text-xs sm:text-sm font-bold py-2.5 sm:py-3 rounded-[0.75rem] shadow-sm transition-all active:scale-95 touch-manipulation ${addedItems[product.id] ? 'bg-[#E8F8B6] text-[#4A6310]' : 'bg-white text-[#111111] hover:bg-gray-50'}`}>
                         {addedItems[product.id] ? <><Check size={14}/> Añadido</> : 'Añadir'}
                       </button>
-                      <button 
-                        onClick={() => handleAddToCart(product, true)}
-                        className="flex-1 bg-[#1A1A1A] hover:bg-black text-white text-xs sm:text-sm font-bold py-2.5 sm:py-3 rounded-[0.75rem] shadow-sm transition-colors active:scale-95 touch-manipulation"
-                      >
-                        Comprar
-                      </button>
+                      <button onClick={() => handleAddToCart(product, true)} className="flex-1 bg-[#1A1A1A] hover:bg-black text-white text-xs sm:text-sm font-bold py-2.5 sm:py-3 rounded-[0.75rem] shadow-sm transition-colors active:scale-95 touch-manipulation">Comprar</button>
                     </div>
                   </div>
-
                   <div className="flex flex-col flex-1 px-1">
-                    {product.sku && (
-                      <span className="font-bold text-[10px] sm:text-xs tracking-widest text-[#4A6310] bg-[#E8F8B6] px-2.5 py-0.5 rounded-full inline-block w-fit mb-1.5 border border-[#C8F169]/40">
-                        #{product.sku}
-                      </span>
-                    )}
-                    
+                    {product.sku && <span className="font-bold text-[10px] sm:text-xs tracking-widest text-[#4A6310] bg-[#E8F8B6] px-2.5 py-0.5 rounded-full inline-block w-fit mb-1.5 border border-[#C8F169]/40">#{product.sku}</span>}
                     <div className="flex flex-col sm:flex-row sm:justify-between items-start gap-1 sm:gap-2">
-                      <h3 className="font-bold text-[#111111] text-sm sm:text-base leading-tight flex-1 line-clamp-2">
-                        {product.name}
-                      </h3>
-                      <span className="font-black text-[#111111] text-sm sm:text-base shrink-0 mt-0.5 sm:mt-0">
-                        ${product.price.toFixed(2)}
-                      </span>
+                      <h3 className="font-bold text-[#111111] text-sm sm:text-base leading-tight flex-1 line-clamp-2">{product.name}</h3>
+                      <span className="font-black text-[#111111] text-sm sm:text-base shrink-0 mt-0.5 sm:mt-0">${product.price.toFixed(2)}</span>
                     </div>
                   </div>
-                  
                 </div>
               ))}
             </div>
-
-            {/* --- SENSOR DE SCROLL INFINITO --- */}
             {visibleCount < filteredProducts.length && (
               <div ref={loaderRef} className="mt-12 flex items-center justify-center py-10 w-full">
                 <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-l-2 border-[#1A1A1A]"></div>
@@ -430,7 +393,7 @@ export default function HomePage() {
         )}
       </main>
 
-      {/* --- FLOATING CHECKOUT BUTTON --- */}
+      {/* --- BOTÓN FLOTANTE COMPRA RÁPIDA --- */}
       {!isCartOpen && cartItemCount > 0 && (
         <div className="fixed bottom-6 md:bottom-8 inset-x-0 z-40 flex justify-center px-4 pointer-events-none animate-in slide-in-from-bottom-8 fade-in duration-300">
           <button 
@@ -444,16 +407,34 @@ export default function HomePage() {
         </div>
       )}
 
-      {/* --- CARRITO SLIDE-OVER (NUEVO AJUSTE h-[100dvh]) --- */}
+      {/* --- CARRITO --- */}
       {isCartOpen && (
-        <div className="fixed inset-0 z-50 flex justify-end">
+        <div className="fixed inset-0 z-[100] flex justify-end overflow-hidden">
           <div className="absolute inset-0 bg-black/40 backdrop-blur-sm transition-opacity" onClick={() => setIsCartOpen(false)} />
-          <div className="relative w-full md:w-[400px] h-[100dvh] bg-white shadow-2xl flex flex-col animate-in slide-in-from-right duration-300">
-            <div className="px-6 py-5 border-b border-[#EAEAEC] flex items-center justify-between bg-white">
+          
+          <div className="relative w-full md:w-[400px] h-full bg-white shadow-2xl flex flex-col animate-in slide-in-from-right duration-300 border-l border-white/10">
+            
+            <div className="px-6 py-5 border-b border-[#EAEAEC] flex items-center justify-between bg-white flex-shrink-0">
               <h2 className="text-xl font-bold tracking-tight flex items-center gap-2"><ShoppingCart size={20} /> Tu Pedido</h2>
               <button onClick={() => setIsCartOpen(false)} className="p-2 bg-[#F4F5F4] hover:bg-[#EAEAEC] rounded-full transition-colors text-[#71717A] hover:text-[#111111] touch-manipulation"><X size={18} /></button>
             </div>
-            <div className="flex-1 overflow-y-auto p-6 space-y-6">
+
+            {/* BARRA DE PROGRESO DE AHORRO */}
+            {cart.length > 0 && (
+              <div className="px-6 py-4 bg-[#F9FAFA] border-b border-[#EAEAEC] flex-shrink-0">
+                <div className="flex justify-between items-end mb-2">
+                  <span className="text-xs font-bold text-[#111111]">
+                    {promoStatus.progress === 100 ? '¡Promo Máxima Desbloqueada! 🥳' : `Faltan ${promoStatus.needed} pares para ahorrar más`}
+                  </span>
+                  {promoStatus.progress < 100 && <span className="text-[10px] font-bold text-[#A1A1AA] uppercase">{cartItemCount}/{promoStatus.goal}</span>}
+                </div>
+                <div className="w-full bg-[#EAEAEC] h-2 rounded-full overflow-hidden">
+                  <div className="bg-[#C8F169] h-full transition-all duration-700 ease-out rounded-full" style={{ width: `${Math.min(promoStatus.progress, 100)}%` }} />
+                </div>
+              </div>
+            )}
+
+            <div className="flex-1 overflow-y-auto overscroll-none p-6 space-y-6">
               {cart.length === 0 ? (
                 <div className="h-full flex flex-col items-center justify-center text-[#71717A] space-y-4">
                   <img src={STORE_LOGO_URL} alt="Carrito vacío" className="w-20 h-20 object-contain opacity-20 grayscale" />
@@ -485,8 +466,9 @@ export default function HomePage() {
                 ))
               )}
             </div>
+
             {cart.length > 0 && (
-              <div className="border-t border-[#EAEAEC] p-6 bg-white space-y-4">
+              <div className="border-t border-[#EAEAEC] p-6 bg-white space-y-4 flex-shrink-0 shadow-[0_-10px_20px_rgba(0,0,0,0.02)]">
                 {savings > 0 && (
                   <div className="flex justify-between items-center text-xs font-bold text-[#4A6310] bg-[#E8F8B6]/50 px-3 py-2.5 rounded-xl border border-[#C8F169]/40">
                     <span className="flex items-center gap-1">🔥 Promo aplicada ({cartItemCount} pares)</span>
@@ -504,31 +486,32 @@ export default function HomePage() {
                   <label className="block text-xs font-bold text-[#71717A] uppercase tracking-wider mb-2">Tu Nombre</label>
                   <input type="text" required value={clientName} onChange={e => setClientName(e.target.value)} placeholder="Ej. Juan Pérez" className="w-full px-4 py-3 bg-[#F4F5F4] border border-[#EAEAEC] rounded-xl focus:ring-2 focus:ring-[#1A1A1A] focus:border-[#1A1A1A] transition-all outline-none font-medium text-sm" />
                 </div>
+                
                 <button onClick={handleWhatsAppCheckout} disabled={cart.length === 0} className="w-full bg-[#1A1A1A] hover:bg-black text-white py-4 rounded-xl font-bold flex items-center justify-center gap-2 transition-all active:scale-[0.98] shadow-lg shadow-black/10 disabled:opacity-50 touch-manipulation">Continuar por WhatsApp <ArrowRight size={18} /></button>
+                
+                {/* ELIMINACIÓN DE OBJECIONES */}
+                <div className="flex justify-center items-center gap-3 pt-1 text-[9px] sm:text-[10px] font-bold text-[#A1A1AA] uppercase tracking-widest">
+                  <span>🔒 Pago seguro</span>
+                  <span>•</span>
+                  <span>📦 Envío a todo el país</span>
+                </div>
               </div>
             )}
           </div>
         </div>
       )}
 
-      {/* --- LIGHTBOX --- */}
       {lightboxUrl && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/90 backdrop-blur-sm animate-in fade-in" onClick={() => setLightboxUrl(null)}>
-          <button className="absolute top-6 right-4 md:top-8 md:right-8 p-3 rounded-full bg-white/20 hover:bg-white/30 backdrop-blur-md text-white transition-colors touch-manipulation z-[100] shadow-lg">
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/90 backdrop-blur-sm animate-in fade-in" onClick={() => setLightboxUrl(null)}>
+          <button className="absolute top-6 right-4 md:top-8 md:right-8 p-3 rounded-full bg-white/20 hover:bg-white/30 backdrop-blur-md text-white transition-colors touch-manipulation z-[130] shadow-lg">
             <X size={24} />
           </button>
-          
           {lightboxUrl === 'fallback' ? (
             <div className="w-64 h-64 bg-white rounded-3xl flex items-center justify-center animate-in zoom-in-90 shadow-2xl relative" onClick={e => e.stopPropagation()}>
               <img src={STORE_LOGO_URL} alt="Sin imagen" className="w-24 h-24 object-contain opacity-20 grayscale" />
             </div>
           ) : (
-            <img 
-              src={lightboxUrl} 
-              alt="Vista ampliada" 
-              className="max-w-[95vw] max-h-[90vh] rounded-2xl shadow-2xl object-contain animate-in zoom-in-90 relative" 
-              onClick={e => e.stopPropagation()} 
-            />
+            <img src={lightboxUrl} alt="Vista ampliada" className="max-w-[95vw] max-h-[90vh] rounded-2xl shadow-2xl object-contain animate-in zoom-in-90 relative" onClick={e => e.stopPropagation()} />
           )}
         </div>
       )}
