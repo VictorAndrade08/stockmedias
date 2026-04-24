@@ -276,9 +276,9 @@ export default function HomePage() {
   return (
     <div className="min-h-screen bg-[#F4F5F4] text-[#111111] font-sans selection:bg-[#C8F169] selection:text-[#111111] relative pb-16 md:pb-0">
       
-      {/* --- TOAST RECUPERACIÓN --- */}
+      {/* --- TOAST RECUPERACIÓN (SOLUCIONADO PARA RESPONSIVE) --- */}
       {showRecoveryToast && (
-        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[100] bg-[#1A1A1A] text-white px-5 py-3 rounded-full text-sm font-bold shadow-xl animate-in slide-in-from-top-4 fade-in flex items-center gap-3 w-[90%] md:w-auto justify-between">
+        <div className="fixed bottom-24 md:bottom-auto md:top-6 left-1/2 -translate-x-1/2 z-[100] bg-[#1A1A1A] text-white px-5 py-3 rounded-full text-sm font-bold shadow-xl animate-in slide-in-from-bottom-4 md:slide-in-from-top-4 fade-in flex items-center gap-3 w-[90%] md:w-auto justify-between">
           <span className="flex-1 text-center">👀 Tus medias te esperan en el carrito</span>
           <button onClick={() => setShowRecoveryToast(false)} className="text-white/60 hover:text-white p-1 touch-manipulation"><X size={16}/></button>
         </div>
@@ -355,6 +355,8 @@ export default function HomePage() {
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-x-3 sm:gap-x-6 gap-y-10 sm:gap-y-12">
               {displayedProducts.map((product) => (
                 <div key={product.id} className="group flex flex-col h-full">
+                  
+                  {/* FOTO 100% LIMPIA */}
                   <div 
                     className="relative w-full aspect-square bg-gradient-to-b from-[#EAEAEC] to-[#F4F5F4] rounded-2xl sm:rounded-[1.5rem] mb-3 md:mb-4 flex items-center justify-center overflow-hidden border border-[#EAEAEC]/50 shadow-sm transition-all duration-500 group-hover:shadow-md cursor-zoom-in"
                     onClick={() => setLightboxUrl(product.image_url || 'fallback')}
@@ -366,21 +368,25 @@ export default function HomePage() {
                     )}
                     
                     <div className="absolute top-2 right-2 md:top-3 md:right-3 bg-white/90 backdrop-blur-sm p-1.5 rounded-full text-[#111111] opacity-0 group-hover:opacity-100 transition-opacity hidden md:block shadow-sm z-20"><ZoomIn size={16} /></div>
-
-                    <div className="absolute inset-x-0 bottom-0 p-2 sm:p-3 flex gap-1.5 sm:gap-2 z-20" onClick={(e) => e.stopPropagation()}>
-                      <button onClick={() => handleAddToCart(product, false)} className={`flex-1 flex items-center justify-center gap-1 text-xs sm:text-sm font-bold py-2.5 sm:py-3 rounded-[0.75rem] shadow-sm transition-all active:scale-95 touch-manipulation ${addedItems[product.id] ? 'bg-[#E8F8B6] text-[#4A6310]' : 'bg-white text-[#111111] hover:bg-gray-50'}`}>
-                        {addedItems[product.id] ? <><Check size={14}/> Añadido</> : 'Añadir'}
-                      </button>
-                      <button onClick={() => handleAddToCart(product, true)} className="flex-1 bg-[#1A1A1A] hover:bg-black text-white text-xs sm:text-sm font-bold py-2.5 sm:py-3 rounded-[0.75rem] shadow-sm transition-colors active:scale-95 touch-manipulation">Comprar</button>
-                    </div>
                   </div>
+
+                  {/* INFO Y BOTONES */}
                   <div className="flex flex-col flex-1 px-1">
                     {product.sku && <span className="font-bold text-[10px] sm:text-xs tracking-widest text-[#4A6310] bg-[#E8F8B6] px-2.5 py-0.5 rounded-full inline-block w-fit mb-1.5 border border-[#C8F169]/40">#{product.sku}</span>}
-                    <div className="flex flex-col sm:flex-row sm:justify-between items-start gap-1 sm:gap-2">
+                    
+                    <div className="flex flex-col sm:flex-row sm:justify-between items-start gap-1 sm:gap-2 mb-3">
                       <h3 className="font-bold text-[#111111] text-sm sm:text-base leading-tight flex-1 line-clamp-2">{product.name}</h3>
                       <span className="font-black text-[#111111] text-sm sm:text-base shrink-0 mt-0.5 sm:mt-0">${product.price.toFixed(2)}</span>
                     </div>
+
+                    <div className="mt-auto flex gap-1.5 sm:gap-2 w-full pt-1" onClick={(e) => e.stopPropagation()}>
+                      <button onClick={() => handleAddToCart(product, false)} className={`flex-1 flex items-center justify-center gap-1 text-xs sm:text-sm font-bold py-2.5 sm:py-3 rounded-[0.75rem] shadow-sm transition-all border active:scale-95 touch-manipulation ${addedItems[product.id] ? 'bg-[#E8F8B6] border-[#C8F169]/40 text-[#4A6310]' : 'bg-white border-[#EAEAEC] text-[#111111] hover:bg-[#F4F5F4]'}`}>
+                        {addedItems[product.id] ? <><Check size={14}/> Añadido</> : 'Añadir'}
+                      </button>
+                      <button onClick={() => handleAddToCart(product, true)} className="flex-1 bg-[#1A1A1A] hover:bg-black text-white text-xs sm:text-sm font-bold py-2.5 sm:py-3 rounded-[0.75rem] shadow-sm transition-colors border border-[#1A1A1A] active:scale-95 touch-manipulation">Comprar</button>
+                    </div>
                   </div>
+
                 </div>
               ))}
             </div>
