@@ -89,6 +89,17 @@ export default function HomePage() {
     localStorage.setItem('wolfe_socks_cart', JSON.stringify(cart));
   }, [cart]);
 
+  // --- BLOQUEO DE SCROLL MÓVIL (UX REDDIT 2026) ---
+  // Evita que la tienda de fondo haga scroll cuando el carrito está abierto
+  useEffect(() => {
+    if (isCartOpen || lightboxUrl) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => { document.body.style.overflow = ''; };
+  }, [isCartOpen, lightboxUrl]);
+
   // --- CARGA, PRIORIZACIÓN Y MEZCLA DE DATOS (CON ANTI-CACHÉ) ---
   useEffect(() => {
     const fetchProducts = async () => {
@@ -433,11 +444,11 @@ export default function HomePage() {
         </div>
       )}
 
-      {/* --- CARRITO SLIDE-OVER --- */}
+      {/* --- CARRITO SLIDE-OVER (NUEVO AJUSTE h-[100dvh]) --- */}
       {isCartOpen && (
         <div className="fixed inset-0 z-50 flex justify-end">
           <div className="absolute inset-0 bg-black/40 backdrop-blur-sm transition-opacity" onClick={() => setIsCartOpen(false)} />
-          <div className="relative w-full md:w-[400px] h-full bg-white shadow-2xl flex flex-col animate-in slide-in-from-right duration-300">
+          <div className="relative w-full md:w-[400px] h-[100dvh] bg-white shadow-2xl flex flex-col animate-in slide-in-from-right duration-300">
             <div className="px-6 py-5 border-b border-[#EAEAEC] flex items-center justify-between bg-white">
               <h2 className="text-xl font-bold tracking-tight flex items-center gap-2"><ShoppingCart size={20} /> Tu Pedido</h2>
               <button onClick={() => setIsCartOpen(false)} className="p-2 bg-[#F4F5F4] hover:bg-[#EAEAEC] rounded-full transition-colors text-[#71717A] hover:text-[#111111] touch-manipulation"><X size={18} /></button>
@@ -500,7 +511,7 @@ export default function HomePage() {
         </div>
       )}
 
-      {/* --- LIGHTBOX (CON LA 'X' OPTIMIZADA PARA RESPONSIVE) --- */}
+      {/* --- LIGHTBOX --- */}
       {lightboxUrl && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/90 backdrop-blur-sm animate-in fade-in" onClick={() => setLightboxUrl(null)}>
           <button className="absolute top-6 right-4 md:top-8 md:right-8 p-3 rounded-full bg-white/20 hover:bg-white/30 backdrop-blur-md text-white transition-colors touch-manipulation z-[100] shadow-lg">
