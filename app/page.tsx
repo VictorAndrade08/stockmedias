@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { ShoppingBag, User, X, ArrowRight, ShoppingCart, Check, ZoomIn, Search } from 'lucide-react';
+import { ShoppingBag, User, X, ArrowRight, ShoppingCart, Check, ZoomIn, Search, ChevronUp, Plus, Package } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 import { useRouter } from 'next/navigation'; 
 
@@ -66,20 +66,15 @@ export default function HomePage() {
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const [cartBump, setCartBump] = useState(false); 
   
-  const [showRecoveryToast, setShowRecoveryToast] = useState(false);
+  // Estado para el botón de "Volver Arriba"
+  const [showScrollTop, setShowScrollTop] = useState(false);
 
   // --- PERSISTENCIA DEL CARRITO ---
   useEffect(() => {
     const savedCart = localStorage.getItem('wolfe_socks_cart');
     if (savedCart) {
       try {
-        const parsedCart = JSON.parse(savedCart);
-        setCart(parsedCart);
-        
-        if (parsedCart.length > 0) {
-          setShowRecoveryToast(true);
-          setTimeout(() => setShowRecoveryToast(false), 5000); 
-        }
+        setCart(JSON.parse(savedCart));
       } catch (err) {
         console.error("Error al cargar el carrito persistente:", err);
       }
@@ -90,8 +85,13 @@ export default function HomePage() {
     localStorage.setItem('wolfe_socks_cart', JSON.stringify(cart));
   }, [cart]);
 
-  // --- BLOQUEO DE SCROLL MÓVIL (CORRECCIÓN "DESCUADRE") ---
+  // --- BLOQUEO DE SCROLL MÓVIL Y BOTÓN VOLVER ARRIBA ---
   useEffect(() => {
+    const handleScroll = () => {
+      setShowScrollTop(window.scrollY > 500);
+    };
+    window.addEventListener('scroll', handleScroll);
+
     if (isCartOpen || lightboxUrl) {
       document.body.style.overflow = 'hidden';
       document.body.style.position = 'fixed';
@@ -101,7 +101,9 @@ export default function HomePage() {
       document.body.style.position = '';
       document.body.style.width = '';
     }
+
     return () => { 
+      window.removeEventListener('scroll', handleScroll);
       document.body.style.overflow = ''; 
       document.body.style.position = '';
       document.body.style.width = '';
@@ -276,14 +278,6 @@ export default function HomePage() {
   return (
     <div className="min-h-screen bg-[#F4F5F4] text-[#111111] font-sans selection:bg-[#C8F169] selection:text-[#111111] relative pb-16 md:pb-0">
       
-      {/* --- TOAST RECUPERACIÓN (SOLO DESKTOP - OCULTO EN MÓVIL) --- */}
-      {showRecoveryToast && (
-        <div className="hidden md:flex fixed top-6 left-1/2 -translate-x-1/2 z-[100] bg-[#1A1A1A] text-white px-5 py-3 rounded-full text-sm font-bold shadow-xl animate-in slide-in-from-top-4 fade-in items-center gap-3 w-auto justify-between">
-          <span className="flex-1 text-center">👀 Tus medias te esperan en el carrito</span>
-          <button onClick={() => setShowRecoveryToast(false)} className="text-white/60 hover:text-white p-1 touch-manipulation"><X size={16}/></button>
-        </div>
-      )}
-
       {/* --- NAVEGACIÓN --- */}
       <header className="sticky top-0 z-40 bg-[#F4F5F4]/90 backdrop-blur-md border-b border-[#EAEAEC]">
         <div className="max-w-[1400px] mx-auto px-4 md:px-6 py-4 md:py-5 flex items-center justify-between">
@@ -312,7 +306,7 @@ export default function HomePage() {
       </header>
 
       {/* --- HERO SECTION --- */}
-      <section className="py-10 md:py-20 px-4 md:px-6 text-center max-w-3xl mx-auto flex flex-col items-center">
+      <section className="py-10 md:py-20 px-4 md:px-6 text-center max-w-3xl mx-auto flex flex-col items-center z-30 relative">
         <h1 className="text-3xl md:text-[3.5rem] font-black uppercase tracking-tighter mb-3 md:mb-4 text-[#111111]">
           ENCUENTRA TU PAR IDEAL
         </h1>
@@ -334,11 +328,48 @@ export default function HomePage() {
           {searchTerm && (
             <button onClick={() => setSearchTerm('')} className="absolute inset-y-0 right-0 pr-4 flex items-center text-[#A1A1AA] hover:text-[#111111] transition-colors"><X size={18} /></button>
           )}
+
+          {/* BUSCADOR PREDICTIVO VISUAL (MENU FLOTANTE) */}
+          {searchTerm.trim() && (
+            <div className="absolute top-full left-0 right-0 mt-2 bg-white border border-[#EAEAEC] rounded-2xl shadow-[0_12px_40px_rgba(0,0,0,0.1)] overflow-hidden z-50 max-h-[50vh] overflow-y-auto animate-in fade-in slide-in-from-top-2 text-left">
+              {displayedProducts.length > 0 ? (
+                <div className="p-2 space-y-1">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-[#A1A1AA] px-3 py-2">Resultados Rápidos</p>
+                  {displayedProducts.slice(0, 5).map(product => (
+                    <div 
+                      key={product.id} 
+                      className="flex items-center gap-3 p-2 hover:bg-[#F9FAFA] rounded-xl transition-colors cursor-pointer group/item"
+                      onClick={() => { handleAddToCart(product, true); setSearchTerm(''); }}
+                    >
+                      <div className="w-12 h-12 bg-[#F4F5F4] rounded-lg overflow-hidden border border-[#EAEAEC] flex items-center justify-center flex-shrink-0">
+                        {product.image_url ? (
+                          <img src={product.image_url} alt={product.name} className="w-full h-full object-cover mix-blend-multiply" />
+                        ) : (
+                          <Package size={16} className="text-[#A1A1AA]" />
+                        )}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-bold text-[#111111] truncate leading-tight">{product.name}</p>
+                        <p className="text-xs font-medium text-[#71717A] mt-0.5">${product.price.toFixed(2)}</p>
+                      </div>
+                      <button className="opacity-100 sm:opacity-0 sm:group-hover/item:opacity-100 p-2 bg-[#1A1A1A] text-white rounded-lg transition-all active:scale-95 flex-shrink-0">
+                        <Plus size={16} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="p-6 text-center text-[#71717A] text-sm font-medium">
+                  No encontramos resultados para "<span className="text-[#111111]">{searchTerm}</span>"
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </section>
 
       {/* --- PRODUCT GRID --- */}
-      <main className="max-w-[1400px] mx-auto px-4 md:px-6 pb-24">
+      <main className="max-w-[1400px] mx-auto px-4 md:px-6 pb-24 relative z-20">
         {loading ? (
           <div className="flex flex-col items-center justify-center py-20 text-[#71717A]">
             <img src={STORE_LOGO_URL} alt="Cargando" className="w-16 h-16 md:w-20 md:h-20 object-contain animate-bounce mb-4 opacity-40 grayscale" />
@@ -347,8 +378,8 @@ export default function HomePage() {
         ) : displayedProducts.length === 0 ? (
           <div className="text-center py-20 text-[#71717A] font-medium flex flex-col items-center">
             <Search size={48} className="text-[#EAEAEC] mb-4" />
-            <p>No se encontraron modelos para "<strong>{searchTerm}</strong>".</p>
-            <button onClick={() => setSearchTerm('')} className="mt-4 text-sm font-bold text-[#1A1A1A] underline decoration-2 underline-offset-4 transition-colors touch-manipulation">Ver todo el catálogo</button>
+            <p>Sigue explorando nuestro catálogo.</p>
+            <button onClick={() => setSearchTerm('')} className="mt-4 text-sm font-bold text-[#1A1A1A] underline decoration-2 underline-offset-4 transition-colors touch-manipulation">Ver todas las medias</button>
           </div>
         ) : (
           <>
@@ -399,6 +430,17 @@ export default function HomePage() {
         )}
       </main>
 
+      {/* --- BOTÓN VOLVER ARRIBA (SCROLL TO TOP) --- */}
+      {showScrollTop && (
+        <button 
+          onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+          className="fixed bottom-[5.5rem] right-4 md:bottom-8 md:right-8 z-40 bg-white border border-[#EAEAEC] text-[#111111] p-3 md:p-4 rounded-full shadow-[0_8px_24px_rgba(0,0,0,0.1)] hover:shadow-[0_12px_30px_rgba(0,0,0,0.15)] hover:-translate-y-1 transition-all touch-manipulation animate-in fade-in zoom-in"
+          aria-label="Volver arriba"
+        >
+          <ChevronUp size={24} />
+        </button>
+      )}
+
       {/* --- BOTÓN FLOTANTE COMPRA RÁPIDA --- */}
       {!isCartOpen && cartItemCount > 0 && (
         <div className="fixed bottom-6 md:bottom-8 inset-x-0 z-40 flex justify-center px-4 pointer-events-none animate-in slide-in-from-bottom-8 fade-in duration-300">
@@ -413,34 +455,36 @@ export default function HomePage() {
         </div>
       )}
 
-      {/* --- CARRITO --- */}
+      {/* --- CARRITO (CON PADDINGS REDUCIDOS PARA SOLUCIONAR EL "APLASTAMIENTO" EN MÓVIL) --- */}
       {isCartOpen && (
         <div className="fixed inset-0 z-[100] flex justify-end overflow-hidden">
           <div className="absolute inset-0 bg-black/40 backdrop-blur-sm transition-opacity" onClick={() => setIsCartOpen(false)} />
           
           <div className="relative w-full md:w-[400px] h-full bg-white shadow-2xl flex flex-col animate-in slide-in-from-right duration-300 border-l border-white/10">
             
-            <div className="px-6 py-5 border-b border-[#EAEAEC] flex items-center justify-between bg-white flex-shrink-0">
-              <h2 className="text-xl font-bold tracking-tight flex items-center gap-2"><ShoppingCart size={20} /> Tu Pedido</h2>
+            {/* Header del carrito: padding reducido en móvil */}
+            <div className="px-4 py-4 md:px-6 md:py-5 border-b border-[#EAEAEC] flex items-center justify-between bg-white flex-shrink-0">
+              <h2 className="text-lg md:text-xl font-bold tracking-tight flex items-center gap-2"><ShoppingCart size={20} /> Tu Pedido</h2>
               <button onClick={() => setIsCartOpen(false)} className="p-2 bg-[#F4F5F4] hover:bg-[#EAEAEC] rounded-full transition-colors text-[#71717A] hover:text-[#111111] touch-manipulation"><X size={18} /></button>
             </div>
 
-            {/* BARRA DE PROGRESO DE AHORRO */}
+            {/* BARRA DE PROGRESO DE AHORRO: padding reducido */}
             {cart.length > 0 && (
-              <div className="px-6 py-4 bg-[#F9FAFA] border-b border-[#EAEAEC] flex-shrink-0">
-                <div className="flex justify-between items-end mb-2">
+              <div className="px-4 py-3 md:px-6 md:py-4 bg-[#F9FAFA] border-b border-[#EAEAEC] flex-shrink-0">
+                <div className="flex justify-between items-end mb-1.5 md:mb-2">
                   <span className="text-xs font-bold text-[#111111]">
                     {promoStatus.progress === 100 ? '¡Promo Máxima Desbloqueada! 🥳' : `Faltan ${promoStatus.needed} pares para ahorrar más`}
                   </span>
                   {promoStatus.progress < 100 && <span className="text-[10px] font-bold text-[#A1A1AA] uppercase">{cartItemCount}/{promoStatus.goal}</span>}
                 </div>
-                <div className="w-full bg-[#EAEAEC] h-2 rounded-full overflow-hidden">
+                <div className="w-full bg-[#EAEAEC] h-1.5 md:h-2 rounded-full overflow-hidden">
                   <div className="bg-[#C8F169] h-full transition-all duration-700 ease-out rounded-full" style={{ width: `${Math.min(promoStatus.progress, 100)}%` }} />
                 </div>
               </div>
             )}
 
-            <div className="flex-1 overflow-y-auto overscroll-none p-6 space-y-6">
+            {/* Lista de productos: padding reducido y tamaño de imagen más pequeño en móvil */}
+            <div className="flex-1 overflow-y-auto overscroll-none p-4 md:p-6 space-y-4 md:space-y-6">
               {cart.length === 0 ? (
                 <div className="h-full flex flex-col items-center justify-center text-[#71717A] space-y-4">
                   <img src={STORE_LOGO_URL} alt="Carrito vacío" className="w-20 h-20 object-contain opacity-20 grayscale" />
@@ -449,23 +493,23 @@ export default function HomePage() {
                 </div>
               ) : (
                 cart.map(item => (
-                  <div key={item.product.id} className="flex gap-4">
-                    <div className="w-20 h-20 bg-[#F4F5F4] rounded-xl flex-shrink-0 overflow-hidden border border-[#EAEAEC] flex items-center justify-center relative">
+                  <div key={item.product.id} className="flex gap-3 md:gap-4">
+                    <div className="w-16 h-16 md:w-20 md:h-20 bg-[#F4F5F4] rounded-xl flex-shrink-0 overflow-hidden border border-[#EAEAEC] flex items-center justify-center relative">
                       {item.product.image_url ? <img src={item.product.image_url} alt={item.product.name} className="w-full h-full object-cover mix-blend-multiply" /> : <img src={STORE_LOGO_URL} alt="Sin imagen" className="w-10 h-10 object-contain opacity-30 grayscale" />}
                     </div>
-                    <div className="flex flex-col justify-between flex-1">
+                    <div className="flex flex-col justify-between flex-1 py-0.5">
                       <div>
-                        {item.product.sku && <span className="font-black text-base tracking-wider text-[#4A6310] block mb-0.5">#{item.product.sku}</span>}
-                        <h4 className="font-bold text-[#111111] text-sm line-clamp-2 leading-tight">{item.product.name}</h4>
-                        <p className="text-xs font-medium text-[#71717A] mt-1">${item.product.price.toFixed(2)} base c/u</p>
+                        {item.product.sku && <span className="font-black text-[10px] md:text-sm tracking-wider text-[#4A6310] block mb-0.5">#{item.product.sku}</span>}
+                        <h4 className="font-bold text-[#111111] text-xs md:text-sm line-clamp-2 leading-tight">{item.product.name}</h4>
+                        <p className="text-[10px] md:text-xs font-medium text-[#71717A] mt-0.5 md:mt-1">${item.product.price.toFixed(2)} base c/u</p>
                       </div>
-                      <div className="flex items-center justify-between mt-2">
-                        <div className="flex items-center bg-[#F4F5F4] rounded-lg p-1">
-                          <button onClick={() => updateQuantity(item.product.id, -1)} className="w-8 h-8 flex items-center justify-center text-[#71717A] hover:text-[#111111] font-bold touch-manipulation">−</button>
-                          <span className="w-6 text-center text-sm font-bold text-[#111111]">{item.quantity}</span>
-                          <button onClick={() => updateQuantity(item.product.id, 1)} className="w-8 h-8 flex items-center justify-center text-[#71717A] hover:text-[#111111] font-bold touch-manipulation">+</button>
+                      <div className="flex items-center justify-between mt-1 md:mt-2">
+                        <div className="flex items-center bg-[#F4F5F4] rounded-lg p-0.5 md:p-1">
+                          <button onClick={() => updateQuantity(item.product.id, -1)} className="w-6 h-6 md:w-8 md:h-8 flex items-center justify-center text-[#71717A] hover:text-[#111111] font-bold touch-manipulation">−</button>
+                          <span className="w-5 md:w-6 text-center text-xs md:text-sm font-bold text-[#111111]">{item.quantity}</span>
+                          <button onClick={() => updateQuantity(item.product.id, 1)} className="w-6 h-6 md:w-8 md:h-8 flex items-center justify-center text-[#71717A] hover:text-[#111111] font-bold touch-manipulation">+</button>
                         </div>
-                        <button onClick={() => removeFromCart(item.product.id)} className="text-xs font-bold text-red-500 hover:text-red-700 underline decoration-red-200 underline-offset-2 p-2 touch-manipulation">Quitar</button>
+                        <button onClick={() => removeFromCart(item.product.id)} className="text-[10px] md:text-xs font-bold text-red-500 hover:text-red-700 underline decoration-red-200 underline-offset-2 p-1.5 md:p-2 touch-manipulation">Quitar</button>
                       </div>
                     </div>
                   </div>
@@ -473,30 +517,32 @@ export default function HomePage() {
               )}
             </div>
 
+            {/* Footer del carrito: Paddings y alturas optimizadas para que no ocupe media pantalla */}
             {cart.length > 0 && (
-              <div className="border-t border-[#EAEAEC] p-6 bg-white space-y-4 flex-shrink-0 shadow-[0_-10px_20px_rgba(0,0,0,0.02)]">
+              <div className="border-t border-[#EAEAEC] p-4 md:p-6 bg-white space-y-3 md:space-y-4 flex-shrink-0 shadow-[0_-10px_20px_rgba(0,0,0,0.02)]">
                 {savings > 0 && (
-                  <div className="flex justify-between items-center text-xs font-bold text-[#4A6310] bg-[#E8F8B6]/50 px-3 py-2.5 rounded-xl border border-[#C8F169]/40">
-                    <span className="flex items-center gap-1">🔥 Promo aplicada ({cartItemCount} pares)</span>
-                    <span className="bg-white px-2 py-1 rounded-md shadow-sm text-[#111111]">- ${savings.toFixed(2)} ahorro</span>
+                  <div className="flex justify-between items-center text-[10px] md:text-xs font-bold text-[#4A6310] bg-[#E8F8B6]/50 px-3 py-2 rounded-lg border border-[#C8F169]/40">
+                    <span className="flex items-center gap-1">🔥 Promo ({cartItemCount} pares)</span>
+                    <span className="bg-white px-2 py-0.5 md:py-1 rounded shadow-sm text-[#111111]">- ${savings.toFixed(2)}</span>
                   </div>
                 )}
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm font-bold text-[#71717A] uppercase tracking-wider">Total Pedido</span>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs md:text-sm font-bold text-[#71717A] uppercase tracking-wider">Total Pedido</span>
                   <div className="flex items-center gap-2">
-                    {savings > 0 && <span className="text-base font-bold text-[#A1A1AA] line-through">${originalTotal.toFixed(2)}</span>}
-                    <span className="text-2xl font-black text-[#111111] tracking-tight">${cartTotal.toFixed(2)}</span>
+                    {savings > 0 && <span className="text-sm md:text-base font-bold text-[#A1A1AA] line-through">${originalTotal.toFixed(2)}</span>}
+                    <span className="text-xl md:text-2xl font-black text-[#111111] tracking-tight">${cartTotal.toFixed(2)}</span>
                   </div>
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-[#71717A] uppercase tracking-wider mb-2">Tu Nombre</label>
-                  <input type="text" required value={clientName} onChange={e => setClientName(e.target.value)} placeholder="Ej. Juan Pérez" className="w-full px-4 py-3 bg-[#F4F5F4] border border-[#EAEAEC] rounded-xl focus:ring-2 focus:ring-[#1A1A1A] focus:border-[#1A1A1A] transition-all outline-none font-medium text-sm" />
+                  <input type="text" required value={clientName} onChange={e => setClientName(e.target.value)} placeholder="Tu Nombre (Ej. Juan Pérez)" className="w-full px-4 py-2.5 md:py-3 bg-[#F4F5F4] border border-[#EAEAEC] rounded-xl focus:ring-2 focus:ring-[#1A1A1A] focus:border-[#1A1A1A] transition-all outline-none font-medium text-sm" />
                 </div>
                 
-                <button onClick={handleWhatsAppCheckout} disabled={cart.length === 0} className="w-full bg-[#1A1A1A] hover:bg-black text-white py-4 rounded-xl font-bold flex items-center justify-center gap-2 transition-all active:scale-[0.98] shadow-lg shadow-black/10 disabled:opacity-50 touch-manipulation">Continuar por WhatsApp <ArrowRight size={18} /></button>
+                <button onClick={handleWhatsAppCheckout} disabled={cart.length === 0} className="w-full bg-[#1A1A1A] hover:bg-black text-white py-3 md:py-4 rounded-xl font-bold flex items-center justify-center gap-2 transition-all active:scale-[0.98] shadow-lg shadow-black/10 disabled:opacity-50 touch-manipulation text-sm md:text-base">
+                  Continuar por WhatsApp <ArrowRight size={16} />
+                </button>
                 
                 {/* ELIMINACIÓN DE OBJECIONES */}
-                <div className="flex justify-center items-center gap-3 pt-1 text-[9px] sm:text-[10px] font-bold text-[#A1A1AA] uppercase tracking-widest">
+                <div className="flex justify-center items-center gap-2 md:gap-3 pt-0.5 text-[8px] md:text-[9px] sm:text-[10px] font-bold text-[#A1A1AA] uppercase tracking-widest">
                   <span>🔒 Pago seguro</span>
                   <span>•</span>
                   <span>📦 Envío a todo el país</span>
