@@ -63,7 +63,6 @@ export default function HomePage() {
   const [clientName, setClientName] = useState('');
   
   const [addedItems, setAddedItems] = useState<{ [key: string]: boolean }>({});
-  // Cambiamos lightboxUrl por lightboxIndex para poder navegar entre productos
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [cartBump, setCartBump] = useState(false); 
   
@@ -92,40 +91,39 @@ export default function HomePage() {
     localStorage.setItem('wolfe_socks_cart', JSON.stringify(cart));
   }, [cart]);
 
-  // --- BLOQUEO DE SCROLL MÓVIL (HACK 2026: NO PERDER LA POSICIÓN) ---
+  // --- HACK DEFINITIVO DE SCROLL (SIN PERDER POSICIÓN AL CAMBIAR FOTOS) ---
+  const scrollPositionRef = useRef(0);
+  const isOverlayActive = isCartOpen || lightboxIndex !== null;
+
+  // 1. Escuchador de scroll flotante (independiente)
   useEffect(() => {
     const handleScroll = () => {
       setShowScrollTop(window.scrollY > 500);
     };
     window.addEventListener('scroll', handleScroll);
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
 
-    if (isCartOpen || lightboxIndex !== null) {
-      // Guardamos la posición exacta antes de bloquear
-      const scrollY = window.scrollY;
-      document.body.style.position = 'fixed';
-      document.body.style.top = `-${scrollY}px`; // Clavamos la página en esa posición
-      document.body.style.width = '100%';
-      document.body.style.overflow = 'hidden';
+  // 2. Bloqueo de body a prueba de balas
+  useEffect(() => {
+    if (isOverlayActive) {
+      // Solo capturamos el scroll si el body AÚN no ha sido bloqueado
+      if (document.body.style.position !== 'fixed') {
+        scrollPositionRef.current = window.scrollY;
+        document.body.style.position = 'fixed';
+        document.body.style.top = `-${scrollPositionRef.current}px`;
+        document.body.style.width = '100%';
+        document.body.style.overflow = 'hidden';
+      }
     } else {
-      // Al cerrar, leemos dónde estaba anclado y devolvemos al usuario ahí
-      const scrollY = document.body.style.top;
+      // Liberamos el scroll y forzamos el regreso exacto
       document.body.style.position = '';
       document.body.style.top = '';
       document.body.style.width = '';
       document.body.style.overflow = '';
-      if (scrollY) {
-        window.scrollTo(0, parseInt(scrollY || '0') * -1);
-      }
+      window.scrollTo(0, scrollPositionRef.current);
     }
-
-    return () => { 
-      window.removeEventListener('scroll', handleScroll);
-      document.body.style.overflow = ''; 
-      document.body.style.position = '';
-      document.body.style.top = '';
-      document.body.style.width = '';
-    };
-  }, [isCartOpen, lightboxIndex]);
+  }, [isOverlayActive]);
 
   // --- CARGA DE DATOS ---
   useEffect(() => {
@@ -354,7 +352,7 @@ export default function HomePage() {
             <button onClick={() => setSearchTerm('')} className="absolute inset-y-0 right-0 pr-4 flex items-center text-[#A1A1AA] hover:text-[#111111] transition-colors"><X size={18} /></button>
           )}
 
-          {/* BUSCADOR PREDICTIVO VISUAL */}
+          {/* BUSCADOR PREDICTIVO VISUAL (MENU FLOTANTE) */}
           {searchTerm.trim() && (
             <div className="absolute top-full left-0 right-0 mt-2 bg-white border border-[#EAEAEC] rounded-2xl shadow-[0_12px_40px_rgba(0,0,0,0.1)] overflow-hidden z-50 max-h-[50vh] overflow-y-auto animate-in fade-in slide-in-from-top-2 text-left">
               {displayedProducts.length > 0 ? (
@@ -412,7 +410,7 @@ export default function HomePage() {
               {displayedProducts.map((product, index) => (
                 <div key={product.id} className="group flex flex-col h-full">
                   
-                  {/* FOTO 100% LIMPIA (CON ÍNDICE PARA LIGHTBOX) */}
+                  {/* FOTO 100% LIMPIA */}
                   <div 
                     className="relative w-full aspect-square bg-gradient-to-b from-[#EAEAEC] to-[#F4F5F4] rounded-2xl sm:rounded-[1.5rem] mb-3 md:mb-4 flex items-center justify-center overflow-hidden border border-[#EAEAEC]/50 shadow-sm transition-all duration-500 group-hover:shadow-md cursor-zoom-in"
                     onClick={() => setLightboxIndex(index)}
