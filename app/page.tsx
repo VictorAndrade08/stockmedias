@@ -53,6 +53,7 @@ export default function HomePage() {
   
   const [allProducts, setAllProducts] = useState<StoreProduct[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<'config' | 'fetch' | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   
   const [visibleCount, setVisibleCount] = useState(ITEMS_PER_PAGE);
@@ -126,32 +127,54 @@ export default function HomePage() {
   }, [isOverlayActive]);
 
   // --- CARGA DE DATOS ---
-  useEffect(() => {
-    const fetchProducts = async () => {
-      if (!supabase) return;
-      setLoading(true);
+  const fetchProducts = useCallback(async () => {
+    setLoading(true);
+    setLoadError(null);
 
+    // Si no hay cliente de Supabase (faltan las variables NEXT_PUBLIC en el
+    // build), NO nos quedamos colgados: mostramos un error de configuración.
+    if (!supabase) {
+      console.error('Supabase no inicializado: faltan NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY');
+      setLoadError('config');
+      setLoading(false);
+      return;
+    }
+
+    // Timeout de seguridad: si Supabase no responde (proyecto pausado, red
+    // caída, etc.) abortamos a los 15s en vez de dejar el spinner infinito.
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+
+    try {
       const { data, error } = await supabase
         .from('products')
         .select('id, sku, name, price, stock, image_url')
-        .neq('id', '00000000-0000-0000-0000-000000000000');
+        .neq('id', '00000000-0000-0000-0000-000000000000')
+        .abortSignal(controller.signal);
 
-      if (error) {
-        console.error('Error fetching store products:', error);
-      } else if (data) {
+      if (error) throw error;
+
+      if (data) {
         const withPhoto = data.filter(p => p.image_url && p.image_url.trim() !== "");
         const withoutPhoto = data.filter(p => !p.image_url || p.image_url.trim() === "");
 
         setAllProducts([
-          ...shuffleArray(withPhoto), 
+          ...shuffleArray(withPhoto),
           ...shuffleArray(withoutPhoto)
         ]);
       }
+    } catch (err) {
+      console.error('Error fetching store products:', err);
+      setLoadError('fetch');
+    } finally {
+      clearTimeout(timeout);
       setLoading(false);
-    };
-
-    fetchProducts();
+    }
   }, []);
+
+  useEffect(() => {
+    fetchProducts();
+  }, [fetchProducts]);
 
   // --- BÚSQUEDA ---
   const filteredProducts = useMemo(() => {
@@ -397,6 +420,22 @@ export default function HomePage() {
           <div className="flex flex-col items-center justify-center py-20 text-[#71717A]">
             <img src={STORE_LOGO_URL} alt="Cargando" className="w-16 h-16 md:w-20 md:h-20 object-contain animate-bounce mb-4 opacity-40 grayscale" />
             <p className="font-medium">Cargando catálogo...</p>
+          </div>
+        ) : loadError ? (
+          <div className="text-center py-20 text-[#71717A] font-medium flex flex-col items-center max-w-md mx-auto">
+            <img src={STORE_LOGO_URL} alt="Error" className="w-16 h-16 md:w-20 md:h-20 object-contain mb-4 opacity-30 grayscale" />
+            <p className="text-[#111111] font-bold mb-1">No pudimos cargar el catálogo</p>
+            <p className="text-sm">
+              {loadError === 'config'
+                ? 'Falta configurar la conexión con la base de datos.'
+                : 'Revisa tu conexión o vuelve a intentarlo en un momento.'}
+            </p>
+            <button
+              onClick={() => fetchProducts()}
+              className="mt-5 bg-[#1A1A1A] hover:bg-black text-white text-sm font-bold px-6 py-3 rounded-xl shadow-sm transition-colors active:scale-95 touch-manipulation"
+            >
+              Reintentar
+            </button>
           </div>
         ) : displayedProducts.length === 0 ? (
           <div className="text-center py-20 text-[#71717A] font-medium flex flex-col items-center">
