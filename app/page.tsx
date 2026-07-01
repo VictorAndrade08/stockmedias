@@ -7,7 +7,10 @@ import { useRouter } from 'next/navigation';
 
 // --- INICIALIZACIÓN DE SUPABASE (ANTI-CACHÉ REDDIT 2026) ---
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL as string;
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY as string; 
+// Aceptamos ambos nombres de variable (con y sin _DEFAULT) para que funcione
+// sin importar cómo esté nombrada la env var en Vercel.
+const supabaseKey = (process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY
+  || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY) as string;
 
 const supabase = (supabaseUrl && supabaseKey) 
   ? createClient(supabaseUrl, supabaseKey, {
@@ -54,6 +57,7 @@ export default function HomePage() {
   const [allProducts, setAllProducts] = useState<StoreProduct[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<'config' | 'fetch' | null>(null);
+  const [errorDetail, setErrorDetail] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState('');
   
   const [visibleCount, setVisibleCount] = useState(ITEMS_PER_PAGE);
@@ -130,6 +134,7 @@ export default function HomePage() {
   const fetchProducts = useCallback(async () => {
     setLoading(true);
     setLoadError(null);
+    setErrorDetail('');
 
     // Si no hay cliente de Supabase (faltan las variables NEXT_PUBLIC en el
     // build), NO nos quedamos colgados: mostramos un error de configuración.
@@ -166,6 +171,10 @@ export default function HomePage() {
     } catch (err) {
       console.error('Error fetching store products:', err);
       setLoadError('fetch');
+      // Guardamos el detalle técnico (ej: "Invalid API key", 401) para poder
+      // diagnosticar en producción sin abrir la consola.
+      const e = err as { message?: string; code?: string; hint?: string };
+      setErrorDetail([e?.code, e?.message, e?.hint].filter(Boolean).join(' · '));
     } finally {
       clearTimeout(timeout);
       setLoading(false);
@@ -430,6 +439,9 @@ export default function HomePage() {
                 ? 'Falta configurar la conexión con la base de datos.'
                 : 'Revisa tu conexión o vuelve a intentarlo en un momento.'}
             </p>
+            {errorDetail && (
+              <p className="mt-2 text-[11px] text-[#A1A1AA] font-mono break-all max-w-xs">{errorDetail}</p>
+            )}
             <button
               onClick={() => fetchProducts()}
               className="mt-5 bg-[#1A1A1A] hover:bg-black text-white text-sm font-bold px-6 py-3 rounded-xl shadow-sm transition-colors active:scale-95 touch-manipulation"
